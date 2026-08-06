@@ -1,3 +1,125 @@
-# Talstomize
+# talstomize
 
 Like kustomize, but for Talos!
+
+`talstomize` renders per-node [Talos Linux](https://www.talos.dev) machine configuration from a single, declarative file: base cluster settings plus a list of nodes, with patches layered on by role (`controlplane` / `worker`) and then by individual node.  
+The same mental model as Kustomize bases and overlays, applied to `talosctl gen config` output instead of Kubernetes manifests.
+
+## Install
+
+> [!NOTE]
+> `talstomize apply` shells out to `talosctl`, so it must also be on your `PATH`, whichever install method you use.
+
+### Download precompiled binaries
+
+Grab the archive for your platform from the
+[GitHub Releases page](https://github.com/mirceanton/talstomize/releases/latest).
+
+### Install via Homebrew
+
+```shell
+brew tap mirceanton/taps
+brew install talstomize
+```
+
+### Running via Docker
+
+```shell
+docker pull ghcr.io/mirceanton/talstomize
+```
+
+### Install via `go install`
+
+```shell
+go install github.com/mirceanton/talstomize/cmd/talstomize@latest
+```
+
+## Usage
+
+1. Generate a secrets bundle once per cluster (talstomize never generates or rotates secrets itself, it only reads them):
+
+   ```shell
+   talosctl gen secrets -o talos-secrets.yaml
+   ```
+
+2. Write a `talstomize.yaml`:
+
+   ```yaml
+   apiVersion: config.talstomize.dev/v1alpha1
+   kind: Talstomize
+
+   clusterName: my-cluster
+   controlPlaneEndpoint: https://10.5.0.2:6443
+   secrets: ./talos-secrets.yaml
+
+   nodes:
+     nodea:
+       ip: 10.5.0.11
+       kind: controlplane
+       patches:
+         - ./patches/nodea-disk.yaml
+     nodeb:
+       ip: 10.5.0.12
+       kind: worker
+       patches:
+         - machine:
+             kubelet:
+               extraMounts:
+                 - destination: /var/lib/longhorn
+                   type: bind
+                   source: /var/lib/longhorn
+                   options: ["bind", "rshared", "rw"]
+
+   # Applied to every controlplane / worker node, before that node's own patches.
+   controlplanePatches:
+     - ./patches/controlplane-common.yaml
+
+   workerPatches: []
+   ```
+
+3. Render the configs (one file per node, written as `<node>.yaml` to `./_out` next to the `talstomize.yaml` by default):
+
+   ```shell
+   talstomize build .                  # writes ./_out/nodea.yaml, ./_out/nodeb.yaml, ...
+   talstomize build . -o ./rendered    # write to ./rendered instead
+   ```
+
+4. Or apply them straight to the nodes:
+
+   ```shell
+   talstomize apply -k .                           # every node
+   talstomize apply -k . --node nodea              # just one
+   talstomize apply -k . -- --insecure             # first apply, maintenance mode
+   talstomize apply -k . -- --insecure --dry-run   # multiple flags at once
+   ```
+
+>[!IMPORTANT]
+> The `apply` subcommand is a thin wrapper. It renders each node's config the same way `build` does, then runs `talosctl apply-config --nodes <ip> --file <rendered>` for it.  
+> Everything after `--` is passed straight through to that `talosctl` invocation, so any `apply-config` flag works (`--insecure`,`--dry-run`, `--mode`, `--talosconfig`, ...) without talstomize needing to know about it.
+
+See [`examples/simple`](./examples/simple) for a complete working example.
+
+## Config reference
+
+| Field                          | Description                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `apiVersion` / `kind`          | Must be `config.talstomize.dev/v1alpha1` / `Talstomize`.                                        |
+| `clusterName`                  | Passed to `talosctl gen config` equivalent as the cluster name.                                 |
+| `controlPlaneEndpoint`         | The cluster's control plane endpoint (e.g. a VIP or load balancer URL).                         |
+| `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency.         |
+| `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`.                                    |
+| `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
+| `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
+| `nodes.<name>.patches`         | Patches applied to this node only, after the role-wide patches.                                 |
+| `controlplanePatches`          | Patches applied to every `controlplane` node.                                                   |
+| `workerPatches`                | Patches applied to every `worker` node.                                                         |
+
+Patches are applied in order: implicit hostname patch → role patches → node patches, each overriding the ones before it. Each patch entry is
+either:
+
+- a **string**, treated as a path to a patch file (relative to the
+  `talstomize.yaml` it's declared in), or
+- an **inline YAML document**, used as the patch directly.
+
+Both strategic-merge patches (a partial Talos machine config) and
+JSON6902 patches are supported, exactly as with `talosctl`'s `--config-patch`.
