@@ -1,0 +1,30 @@
+---
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+
+clusterName: home-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+    patches:
+      - ./patches/nodea-disk.yaml
+  nodeb:
+    ip: 10.5.0.12
+    kind: worker
+    patches:
+      - machine:
+          kubelet:
+            extraMounts:
+              - destination: /var/lib/longhorn
+                type: bind
+                source: /var/lib/longhorn
+                options: ["bind", "rshared", "rw"]
+
+controlplanePatches:
+  - ./patches/controlplane-common.yaml
+
+workerPatches: []
