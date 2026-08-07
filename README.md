@@ -106,7 +106,7 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `apiVersion` / `kind`          | Must be `config.talstomize.dev/v1alpha1` / `Talstomize`.                                        |
 | `clusterName`                  | Passed to `talosctl gen config` equivalent as the cluster name.                                 |
 | `controlPlaneEndpoint`         | The cluster's control plane endpoint (e.g. a VIP or load balancer URL).                         |
-| `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency.         |
+| `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency. A leading `v` (e.g. `v1.31.1`) is accepted and stripped. |
 | `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`.                                    |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
@@ -123,3 +123,32 @@ either:
 
 Both strategic-merge patches (a partial Talos machine config) and
 JSON6902 patches are supported, exactly as with `talosctl`'s `--config-patch`.
+
+## Environment variable substitution
+
+`talstomize.yaml` and every patch (file-based or inline) are expanded for
+`${VAR}` references before being parsed, so secrets like registry
+credentials don't have to be committed in plain text:
+
+```yaml
+# patches/registry.yaml
+machine:
+  registries:
+    config:
+      registry.example.com:
+        auth:
+          username: ${REGISTRY_USERNAME}
+          password: ${REGISTRY_PASSWORD}
+```
+
+```shell
+REGISTRY_USERNAME=... REGISTRY_PASSWORD=... talstomize build .
+# or, with a secrets manager that populates the environment for you:
+op run --env-file=.env -- talstomize build .
+```
+
+If a `${VAR}` is referenced but unset in the environment, talstomize fails
+the build rather than silently rendering an empty value.
+
+Substitution runs over the whole raw file, comments included - a literal
+`${...}`-looking string in a comment is expanded too.

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mirceanton/talstomize/internal/envsubst"
 )
 
 // APIVersion and Kind are the only accepted values for the corresponding
@@ -65,6 +67,11 @@ func Load(path string) (*Config, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	contents, err = envsubst.Expand(contents)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
 	var cfg Config

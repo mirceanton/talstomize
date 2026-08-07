@@ -138,13 +138,98 @@ workerPatches: []
 // example value (e.g. "# disk: /dev/sda"), so a plain substring match can't
 // tell an actually-applied patch from its own documentation.
 func hasSetLine(yaml, needle string) bool {
-	for _, line := range strings.Split(yaml, "\n") {
+	for line := range strings.SplitSeq(yaml, "\n") {
 		if strings.Contains(line, needle) && !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			return true
 		}
 	}
 
 	return false
+}
+
+func TestEngineRenderNodeEnvsubst(t *testing.T) {
+	t.Setenv("TALSTOMIZE_TEST_REGISTRY_USER", "envsubst-user")
+
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "patches", "registry.yaml"),
+		"machine:\n  registries:\n    config:\n      example.com:\n        auth:\n          username: ${TALSTOMIZE_TEST_REGISTRY_USER}\n")
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+    patches:
+      - ./patches/registry.yaml
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	nodea, err := engine.RenderNode("nodea")
+	if err != nil {
+		t.Fatalf("RenderNode(nodea): %v", err)
+	}
+
+	if !hasSetLine(mustString(t, nodea), "username: envsubst-user") {
+		t.Errorf("nodea config missing expanded registry username")
+	}
+}
+
+func TestEngineRenderNodeEnvsubstUndefined(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "patches", "registry.yaml"),
+		"machine:\n  registries:\n    config:\n      example.com:\n        auth:\n          username: ${TALSTOMIZE_TEST_REGISTRY_USER_UNDEFINED}\n")
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+    patches:
+      - ./patches/registry.yaml
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	if _, err := engine.RenderNode("nodea"); err == nil {
+		t.Fatal("RenderNode(nodea): expected an error for an undefined variable, got nil")
+	}
 }
 
 func TestEngineRenderNodeUnknown(t *testing.T) {

@@ -5,6 +5,7 @@ package talos
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
@@ -33,7 +34,9 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		)
 	}
 
-	kubernetesVersion := cfg.KubernetesVersion
+	// Talos machinery builds image references as "<image>:v<KubernetesVersion>", so a
+	// leading "v" here (e.g. copy-pasted from a Talhelper config) would double up.
+	kubernetesVersion := strings.TrimPrefix(cfg.KubernetesVersion, "v")
 	if kubernetesVersion == "" {
 		kubernetesVersion = constants.DefaultKubernetesVersion
 	}
@@ -77,7 +80,13 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 		return nil, fmt.Errorf("generating base config for node %q: %w", name, err)
 	}
 
-	hostnamePatch, err := configpatcher.LoadPatch([]byte(fmt.Sprintf("machine:\n  network:\n    hostname: %s\n", name)))
+	// The base config carries a default `HostnameConfig{auto: stable}` document, which
+	// conflicts with setting the legacy machine.network.hostname field below (Talos
+	// rejects a config that sets both). Delete it so the static hostname wins.
+	hostnamePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil,
+		"machine:\n  network:\n    hostname: %s\n---\napiVersion: v1alpha1\nkind: HostnameConfig\n$patch: delete\n",
+		name,
+	))
 	if err != nil {
 		return nil, fmt.Errorf("node %q: building hostname patch: %w", name, err)
 	}
