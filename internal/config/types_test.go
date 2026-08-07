@@ -114,6 +114,36 @@ nodes:
   nodea:
     kind: worker
 `,
+		"cluster-wide installer.image and installer.schematic both set": `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+installer:
+  image: ghcr.io/siderolabs/installer:v1.13.8
+  schematic:
+    customization: {}
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`,
+		"node installer.image and installer.schematic both set": `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+    installer:
+      image: ghcr.io/siderolabs/installer:v1.13.8
+      schematic:
+        customization: {}
+`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()

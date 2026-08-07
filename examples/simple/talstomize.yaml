@@ -6,10 +6,17 @@ clusterName: home-cluster
 controlPlaneEndpoint: https://10.5.0.2:6443
 secrets: ./talos-secrets.yaml
 
+# Cluster-wide default; nodea overrides it below (e.g. for a custom
+# Image Factory schematic that only that node needs).
+installer:
+  image: ghcr.io/siderolabs/installer:v1.9.5
+
 nodes:
   nodea:
     ip: 10.5.0.11
     kind: controlplane
+    installer:
+      image: factory.talos.dev/metal-installer/abc123:v1.9.5
     patches:
       - ./patches/nodea-disk.yaml
   nodeb:

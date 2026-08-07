@@ -16,15 +16,25 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
 	"github.com/siderolabs/talos/pkg/machinery/config/machine"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
+	tversion "github.com/siderolabs/talos/pkg/machinery/version"
 
 	tstomcfg "github.com/mirceanton/talstomize/internal/config"
+	"github.com/mirceanton/talstomize/internal/factory"
 	tstomsops "github.com/mirceanton/talstomize/internal/sops"
 )
 
 // Engine renders per-node Talos machine configs from a talstomize Config.
 type Engine struct {
-	cfg   *tstomcfg.Config
-	input *generate.Input
+	cfg          *tstomcfg.Config
+	input        *generate.Input
+	talosVersion string
+
+	// resolveSchematic posts a schematic customization to the Image
+	// Factory and returns its ID; defaults to factory.Schematic, swappable
+	// in tests. schematics memoizes customization YAML -> schematic ID, so
+	// a cluster-wide schematic shared by many nodes is only resolved once.
+	resolveSchematic func([]byte) (string, error)
+	schematics       map[string]string
 }
 
 // NewEngine loads the referenced secrets bundle and prepares config
@@ -70,7 +80,15 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		return nil, fmt.Errorf("preparing config generation: %w", err)
 	}
 
-	return &Engine{cfg: cfg, input: input}, nil
+	// Only consulted for a Schematic-computed install image, so - unlike
+	// KubernetesVersion - a leading "v" isn't stripped, it's normalized to
+	// always be present: the installer image tag needs it either way.
+	talosVersion := "v" + strings.TrimPrefix(cfg.Installer.TalosVersion, "v")
+	if cfg.Installer.TalosVersion == "" {
+		talosVersion = tversion.Tag
+	}
+
+	return &Engine{cfg: cfg, input: input, talosVersion: talosVersion, resolveSchematic: factory.Schematic}, nil
 }
 
 // Talosconfig returns the talosctl client configuration for the cluster,
@@ -99,9 +117,56 @@ func loadSecretsBundle(path string) (*secrets.Bundle, error) {
 	return bundle, nil
 }
 
+// effectiveInstallImage resolves the install image for node: its own
+// installer.image or installer.schematic if set (config.validate already
+// rejects both being set at once), else the cluster-wide installer.image
+// or installer.schematic, else "" - left for patches to set, same as when
+// neither is configured.
+func (e *Engine) effectiveInstallImage(node tstomcfg.Node) (string, error) {
+	switch {
+	case node.Installer.Image != "":
+		return node.Installer.Image, nil
+	case node.Installer.SchematicSet():
+		return e.resolveSchematicImage(node.Installer.Schematic)
+	case e.cfg.Installer.Image != "":
+		return e.cfg.Installer.Image, nil
+	case e.cfg.Installer.SchematicSet():
+		return e.resolveSchematicImage(e.cfg.Installer.Schematic)
+	default:
+		return "", nil
+	}
+}
+
+// resolveSchematicImage posts schematic to the Image Factory (memoized, so
+// the same customization is only ever resolved once) and returns the
+// resulting metal-platform installer image reference.
+func (e *Engine) resolveSchematicImage(schematic yaml.Node) (string, error) {
+	raw, err := yaml.Marshal(&schematic)
+	if err != nil {
+		return "", fmt.Errorf("marshaling schematic: %w", err)
+	}
+
+	id, ok := e.schematics[string(raw)]
+	if !ok {
+		id, err = e.resolveSchematic(raw)
+		if err != nil {
+			return "", fmt.Errorf("resolving schematic: %w", err)
+		}
+
+		if e.schematics == nil {
+			e.schematics = map[string]string{}
+		}
+
+		e.schematics[string(raw)] = id
+	}
+
+	return factory.InstallerImage(id, e.talosVersion), nil
+}
+
 // RenderNode builds the final, patched machine config for a single node, in
-// order: implicit hostname patch → cluster-wide patches → role patches →
-// node's own patches, each overriding the ones before it.
+// order: implicit hostname patch → implicit per-node install image patch
+// (if set) → cluster-wide patches → role patches → node's own patches,
+// each overriding the ones before it.
 func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 	node, ok := e.cfg.Nodes[name]
 	if !ok {
@@ -130,6 +195,22 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 	}
 
 	patches := []configpatcher.Patch{hostnamePatch}
+
+	installImage, err := e.effectiveInstallImage(node)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: resolving install image: %w", name, err)
+	}
+
+	if installImage != "" {
+		installImagePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil,
+			"machine:\n  install:\n    image: %s\n", installImage,
+		))
+		if err != nil {
+			return nil, fmt.Errorf("node %q: building install image patch: %w", name, err)
+		}
+
+		patches = append(patches, installImagePatch)
+	}
 
 	resolved, err := ResolvePatches(e.cfg.Dir(), e.cfg.Patches)
 	if err != nil {
