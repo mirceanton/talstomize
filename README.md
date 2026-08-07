@@ -2,7 +2,7 @@
 
 Like kustomize, but for Talos!
 
-`talstomize` renders per-node [Talos Linux](https://www.talos.dev) machine configuration from a single, declarative file: base cluster settings plus a list of nodes, with patches layered on by role (`controlplane` / `worker`) and then by individual node.  
+`talstomize` renders per-node [Talos Linux](https://www.talos.dev) machine configuration from a single, declarative file: default cluster settings plus a list of nodes, with patches layered on by role (`controlplane` / `worker`) and then by individual node.  
 The same mental model as Kustomize bases and overlays, applied to `talosctl gen config` output instead of Kubernetes manifests.
 
 ## Install
@@ -94,21 +94,21 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
 4. Or apply them straight to the nodes:
 
    ```shell
-   talstomize apply -k .                           # every node
-   talstomize apply -k . --node nodea              # just one
-   talstomize apply -k . -- --insecure             # first apply, maintenance mode
-   talstomize apply -k . -- --insecure --dry-run   # multiple flags at once
+   talstomize apply -f .                           # every node
+   talstomize apply -f . --node nodea              # just one
+   talstomize apply -f . -- --insecure             # first apply, maintenance mode
+   talstomize apply -f . -- --insecure --dry-run   # multiple flags at once
    ```
 
 5. Or check what would change before applying anything:
 
    ```shell
-   talstomize diff -k .                # every node
-   talstomize diff -k . --node nodea   # just one
+   talstomize diff -f .                # every node
+   talstomize diff -f . --node nodea   # just one
    ```
 
    ```console
-   $ talstomize diff -k .
+   $ talstomize diff -f .
    ==> nodea (10.5.0.11):
    --- a
    +++ b

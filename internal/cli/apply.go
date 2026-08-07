@@ -14,8 +14,8 @@ import (
 
 func newApplyCommand() *cobra.Command {
 	var (
-		kustomizeDir string
-		nodeFilter   string
+		file       string
+		nodeFilter string
 	)
 
 	cmd := &cobra.Command{
@@ -24,7 +24,7 @@ func newApplyCommand() *cobra.Command {
 		Long: "Render each node's machine config and apply it with `talosctl apply-config`, " +
 			"talking to the node's IP directly. Requires talosctl to be installed and on PATH.\n\n" +
 			"Anything after `--` is passed through to talosctl as-is, e.g.\n" +
-			"  talstomize apply -k . -- --insecure --dry-run",
+			"  talstomize apply -f . -- --insecure --dry-run",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			passthrough, err := passthroughArgs(cmd, args)
@@ -32,7 +32,7 @@ func newApplyCommand() *cobra.Command {
 				return err
 			}
 
-			path := kustomizeDir
+			path := file
 			if path == "" {
 				path = "."
 			}
@@ -94,7 +94,7 @@ func newApplyCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&kustomizeDir, "kustomize", "k", "", "path to a directory containing talstomize.yaml (defaults to the current directory)")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "path to a talstomize.yaml file, or a directory containing one (defaults to the current directory); all relative paths in it resolve against that file's directory")
 	cmd.Flags().StringVar(&nodeFilter, "node", "", "only apply to this node (by name)")
 
 	return cmd

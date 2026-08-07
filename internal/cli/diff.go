@@ -20,8 +20,8 @@ import (
 
 func newDiffCommand() *cobra.Command {
 	var (
-		kustomizeDir string
-		nodeFilter   string
+		file       string
+		nodeFilter string
 	)
 
 	cmd := &cobra.Command{
@@ -31,7 +31,7 @@ func newDiffCommand() *cobra.Command {
 			"running config with `talosctl get machineconfig`, and print the difference. Requires " +
 			"talosctl to be installed and on PATH.\n\n" +
 			"Anything after `--` is passed through to talosctl as-is, e.g.\n" +
-			"  talstomize diff -k . -- --insecure\n\n" +
+			"  talstomize diff -f . -- --insecure\n\n" +
 			"Exits 0 if every node matches, 1 if any node differs (or on error).",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -40,7 +40,7 @@ func newDiffCommand() *cobra.Command {
 				return err
 			}
 
-			path := kustomizeDir
+			path := file
 			if path == "" {
 				path = "."
 			}
@@ -100,7 +100,7 @@ func newDiffCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&kustomizeDir, "kustomize", "k", "", "path to a directory containing talstomize.yaml (defaults to the current directory)")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "path to a talstomize.yaml file, or a directory containing one (defaults to the current directory); all relative paths in it resolve against that file's directory")
 	cmd.Flags().StringVar(&nodeFilter, "node", "", "only diff this node (by name)")
 
 	return cmd
