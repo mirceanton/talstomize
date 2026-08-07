@@ -55,6 +55,7 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 	input, err := generate.NewInput(cfg.ClusterName, cfg.ControlPlaneEndpoint, kubernetesVersion,
 		generate.WithSecretsBundle(bundle),
 		generate.WithEndpointList(endpoints),
+		generate.WithAdditionalSubjectAltNames(cfg.AdditionalSubjectAltNames),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("preparing config generation: %w", err)

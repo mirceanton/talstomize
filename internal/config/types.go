@@ -42,6 +42,11 @@ type Config struct {
 	KubernetesVersion    string `yaml:"kubernetesVersion,omitempty"`
 	Secrets              string `yaml:"secrets"`
 
+	// AdditionalSubjectAltNames are added to both the machine and the
+	// kube-apiserver certificates, on every node - the equivalent of
+	// talosctl gen config's --additional-sans.
+	AdditionalSubjectAltNames []string `yaml:"additionalSubjectAltNames,omitempty"`
+
 	Nodes map[string]Node `yaml:"nodes"`
 
 	// Patches apply to every node regardless of role, before
