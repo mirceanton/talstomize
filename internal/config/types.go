@@ -47,6 +47,10 @@ type Config struct {
 	// talosctl gen config's --additional-sans.
 	AdditionalSubjectAltNames []string `yaml:"additionalSubjectAltNames,omitempty"`
 
+	// DNSDomain is the equivalent of talosctl gen config's --dns-domain.
+	// Optional; defaults to "cluster.local".
+	DNSDomain string `yaml:"dnsDomain,omitempty"`
+
 	Nodes map[string]Node `yaml:"nodes"`
 
 	// Patches apply to every node regardless of role, before
