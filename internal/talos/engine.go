@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	clientconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate"
@@ -70,6 +71,14 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 	}
 
 	return &Engine{cfg: cfg, input: input}, nil
+}
+
+// Talosconfig returns the talosctl client configuration for the cluster,
+// authenticated against the same secrets bundle used to generate machine
+// configs - the equivalent of talosctl gen config's default "talosconfig"
+// output, with admin ("os:admin") access.
+func (e *Engine) Talosconfig() (*clientconfig.Config, error) {
+	return e.input.Talosconfig()
 }
 
 // loadSecretsBundle reads the secrets bundle at path, transparently

@@ -18,7 +18,8 @@ func newBuildCommand() *cobra.Command {
 		Use:   "build [path]",
 		Short: "Render per-node Talos machine configs",
 		Long: "Render per-node Talos machine configs from a talstomize.yaml, applying role and " +
-			"per-node patches, and write one file per node (named <node>.yaml) to the output directory.",
+			"per-node patches, and write one file per node (named <node>.yaml) to the output " +
+			"directory, plus a talosctl client config (named \"talosconfig\").",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -65,6 +66,23 @@ func newBuildCommand() *cobra.Command {
 
 				fmt.Fprintf(out, "wrote %s\n", dest)
 			}
+
+			talosconfig, err := engine.Talosconfig()
+			if err != nil {
+				return fmt.Errorf("generating talosconfig: %w", err)
+			}
+
+			encoded, err := talosconfig.Bytes()
+			if err != nil {
+				return fmt.Errorf("encoding talosconfig: %w", err)
+			}
+
+			dest := filepath.Join(dir, "talosconfig")
+			if err := os.WriteFile(dest, encoded, 0o600); err != nil {
+				return fmt.Errorf("writing %s: %w", dest, err)
+			}
+
+			fmt.Fprintf(out, "wrote %s\n", dest)
 
 			return nil
 		},

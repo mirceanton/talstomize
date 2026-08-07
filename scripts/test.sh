@@ -47,6 +47,10 @@ assert_set examples/simple/_out/nodeb.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodeb.yaml "destination: /var/lib/longhorn"
 assert_unset examples/simple/_out/nodeb.yaml "disk: /dev/sda"
 
+echo "====> Validating a talosctl client config was generated too..."
+assert_set examples/simple/_out/talosconfig "context: home-cluster"
+assert_set examples/simple/_out/talosconfig "10.5.0.11"
+
 echo "========================================================================================="
 echo "Tests completed successfully!"
 echo "========================================================================================="
