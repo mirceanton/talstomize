@@ -44,6 +44,10 @@ type Config struct {
 
 	Nodes map[string]Node `yaml:"nodes"`
 
+	// Patches apply to every node regardless of role, before
+	// ControlPlanePatches/WorkerPatches - the talstomize.yaml equivalent of
+	// talosctl gen config's unprefixed --config-patch.
+	Patches             []yaml.Node `yaml:"patches,omitempty"`
 	ControlPlanePatches []yaml.Node `yaml:"controlplanePatches,omitempty"`
 	WorkerPatches       []yaml.Node `yaml:"workerPatches,omitempty"`
 

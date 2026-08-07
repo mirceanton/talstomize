@@ -35,13 +35,15 @@ assert_unset() {
   fi
 }
 
-echo "====> Validating nodea (controlplane) got its hostname, per-node, and role patches..."
+echo "====> Validating nodea (controlplane) got its hostname, cluster-wide, per-node, and role patches..."
 assert_set examples/simple/_out/nodea.yaml "hostname: nodea"
+assert_set examples/simple/_out/nodea.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodea.yaml "disk: /dev/sda"
 assert_set examples/simple/_out/nodea.yaml "allowSchedulingOnControlPlanes: true"
 
-echo "====> Validating nodeb (worker) got its hostname and inline patch, but not nodea's..."
+echo "====> Validating nodeb (worker) got its hostname, cluster-wide, and inline patch, but not nodea's..."
 assert_set examples/simple/_out/nodeb.yaml "hostname: nodeb"
+assert_set examples/simple/_out/nodeb.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodeb.yaml "destination: /var/lib/longhorn"
 assert_unset examples/simple/_out/nodeb.yaml "disk: /dev/sda"
 

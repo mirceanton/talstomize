@@ -71,6 +71,12 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
                    source: /var/lib/longhorn
                    options: ["bind", "rshared", "rw"]
 
+   # Applied to every node, regardless of role.
+   patches:
+     - machine:
+         sysctls:
+           net.core.somaxconn: "1024"
+
    # Applied to every controlplane / worker node, before that node's own patches.
    controlplanePatches:
      - ./patches/controlplane-common.yaml
@@ -111,11 +117,12 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`. May be sops-encrypted.              |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
-| `nodes.<name>.patches`         | Patches applied to this node only, after the role-wide patches.                                 |
+| `nodes.<name>.patches`         | Patches applied to this node only, after the cluster-wide and role-wide patches.                |
+| `patches`                      | Patches applied to every node, regardless of role - the equivalent of `talosctl gen config`'s unprefixed `--config-patch`. |
 | `controlplanePatches`          | Patches applied to every `controlplane` node.                                                   |
 | `workerPatches`                | Patches applied to every `worker` node.                                                         |
 
-Patches are applied in order: implicit hostname patch → role patches → node patches, each overriding the ones before it. Each patch entry is
+Patches are applied in order: implicit hostname patch → `patches` (cluster-wide) → role patches (`controlplanePatches`/`workerPatches`) → node patches, each overriding the ones before it. Each patch entry is
 either:
 
 - a **string**, treated as either:

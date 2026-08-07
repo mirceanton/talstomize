@@ -81,10 +81,9 @@ func loadSecretsBundle(path string) (*secrets.Bundle, error) {
 	return bundle, nil
 }
 
-// RenderNode builds the final, patched machine config for a single node:
-// the base role config, with the role-wide patches applied, then the
-// node's own patches, with an implicit hostname patch applied first so
-// that patches can still override it.
+// RenderNode builds the final, patched machine config for a single node, in
+// order: implicit hostname patch → cluster-wide patches → role patches →
+// node's own patches, each overriding the ones before it.
 func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 	node, ok := e.cfg.Nodes[name]
 	if !ok {
@@ -114,12 +113,19 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 
 	patches := []configpatcher.Patch{hostnamePatch}
 
+	resolved, err := ResolvePatches(e.cfg.Dir(), e.cfg.Patches)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: cluster patches: %w", name, err)
+	}
+
+	patches = append(patches, resolved...)
+
 	rolePatches := e.cfg.WorkerPatches
 	if node.Kind == tstomcfg.KindControlPlane {
 		rolePatches = e.cfg.ControlPlanePatches
 	}
 
-	resolved, err := ResolvePatches(e.cfg.Dir(), rolePatches)
+	resolved, err = ResolvePatches(e.cfg.Dir(), rolePatches)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: role patches: %w", name, err)
 	}
@@ -128,7 +134,7 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 
 	resolved, err = ResolvePatches(e.cfg.Dir(), node.Patches)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: patches: %w", name, err)
+		return nil, fmt.Errorf("node %q: node patches: %w", name, err)
 	}
 
 	patches = append(patches, resolved...)
