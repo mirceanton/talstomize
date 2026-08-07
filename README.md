@@ -8,7 +8,7 @@ The same mental model as Kustomize bases and overlays, applied to `talosctl gen 
 ## Install
 
 > [!NOTE]
-> `talstomize apply` shells out to `talosctl`, so it must also be on your `PATH`, whichever install method you use.
+> `talstomize apply` and `talstomize diff` shell out to `talosctl`, so it must also be on your `PATH`, whichever install method you use.
 > If your secrets bundle is sops-encrypted, [`sops`](https://github.com/getsops/sops) must be on `PATH` too - talstomize shells out to it rather than embedding it, so plaintext bundles need no extra tooling at all.
 
 ### Download precompiled binaries
@@ -100,9 +100,31 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
    talstomize apply -k . -- --insecure --dry-run   # multiple flags at once
    ```
 
+5. Or check what would change before applying anything:
+
+   ```shell
+   talstomize diff -k .                # every node
+   talstomize diff -k . --node nodea   # just one
+   ```
+
+   ```console
+   $ talstomize diff -k .
+   ==> nodea (10.5.0.11):
+   --- a
+   +++ b
+   @@ -12,3 +12,3 @@
+        install:
+   -        image: ghcr.io/siderolabs/installer:v1.9.5
+   +        image: ghcr.io/siderolabs/installer:v1.9.6
+   ==> nodeb (10.5.0.12): no differences
+   ```
+
+   Exits `0` if every node matches, `1` if any node differs (or on error) -
+   safe to use in a script or CI check.
+
 >[!IMPORTANT]
-> The `apply` subcommand is a thin wrapper. It renders each node's config the same way `build` does, then runs `talosctl apply-config --nodes <ip> --file <rendered>` for it.  
-> Everything after `--` is passed straight through to that `talosctl` invocation, so any `apply-config` flag works (`--insecure`,`--dry-run`, `--mode`, `--talosconfig`, ...) without talstomize needing to know about it.
+> `apply` and `diff` are thin wrappers. `apply` renders each node's config the same way `build` does, then runs `talosctl apply-config --nodes <ip> --file <rendered>` for it. `diff` renders it the same way, fetches the node's currently running config via `talosctl get machineconfig --nodes <ip> -o yaml`, and diffs the two (encoded without comments, so the diff isn't swamped by Talos's per-field documentation).  
+> Everything after `--` is passed straight through to the underlying `talosctl` invocation, so any of its flags work (`--insecure`, `--dry-run`, `--mode`, `--talosconfig`, `--endpoints`, ...) without talstomize needing to know about them.
 
 See [`examples/simple`](./examples/simple) for a complete working example.
 
