@@ -192,6 +192,13 @@ REGISTRY_USERNAME=... REGISTRY_PASSWORD=... talstomize build .
 op run --env-file=.env -- talstomize build .
 ```
 
+If a `.env` file sits next to `talstomize.yaml`, it's loaded automatically
+(no need to source it yourself first) - handy for local dev, though
+anything containing real secrets should stay out of git
+(`echo .env >> .gitignore`). It follows the usual dotenv convention: it
+never overrides a variable that's already set, so an explicit `export` or
+`op run` still wins over whatever the file has.
+
 If a `${VAR}` is referenced but unset in the environment, talstomize fails
 the build rather than silently rendering an empty value.
 

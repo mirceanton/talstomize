@@ -208,3 +208,84 @@ nodes:
 		t.Fatal("Load: expected an error for an undefined variable, got nil")
 	}
 }
+
+func TestLoadDotEnv(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Cleanup(func() { os.Unsetenv("TALSTOMIZE_TEST_DOTENV_CLUSTER_NAME") })
+	writeFile(t, dir, ".env", "TALSTOMIZE_TEST_DOTENV_CLUSTER_NAME=dotenv-cluster\n")
+
+	writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: ${TALSTOMIZE_TEST_DOTENV_CLUSTER_NAME}
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.ClusterName != "dotenv-cluster" {
+		t.Errorf("ClusterName = %q, want %q", cfg.ClusterName, "dotenv-cluster")
+	}
+}
+
+func TestLoadDotEnvDoesNotOverrideExisting(t *testing.T) {
+	t.Setenv("TALSTOMIZE_TEST_DOTENV_OVERRIDE", "from-process-env")
+
+	dir := t.TempDir()
+
+	writeFile(t, dir, ".env", "TALSTOMIZE_TEST_DOTENV_OVERRIDE=from-dotenv-file\n")
+
+	writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: ${TALSTOMIZE_TEST_DOTENV_OVERRIDE}
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.ClusterName != "from-process-env" {
+		t.Errorf("ClusterName = %q, want %q (an already-set env var must win over .env)", cfg.ClusterName, "from-process-env")
+	}
+}
+
+func TestLoadDotEnvMalformed(t *testing.T) {
+	dir := t.TempDir()
+
+	// godotenv rejects lines with no "=" and no recognizable export/comment
+	// syntax.
+	writeFile(t, dir, ".env", "this is not valid dotenv syntax\n")
+
+	writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	if _, err := Load(dir); err == nil {
+		t.Fatal("Load: expected an error for a malformed .env file, got nil")
+	}
+}

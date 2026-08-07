@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 
 	"github.com/mirceanton/talstomize/internal/envsubst"
@@ -133,6 +134,17 @@ func Load(path string) (*Config, error) {
 		path = filepath.Join(path, "talstomize.yaml")
 	}
 
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s: %w", path, err)
+	}
+
+	dir := filepath.Dir(abs)
+
+	if err := loadDotEnv(dir); err != nil {
+		return nil, err
+	}
+
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
@@ -148,18 +160,37 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolving %s: %w", path, err)
-	}
-
-	cfg.dir = filepath.Dir(abs)
+	cfg.dir = dir
 
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
 	return &cfg, nil
+}
+
+// loadDotEnv loads a ".env" file next to talstomize.yaml (in dir) into the
+// process environment, if one exists, so envsubst.Expand can pick up its
+// values without the caller having to export them first. Like godotenv's
+// own Load, it never overrides a variable that's already set - an
+// explicitly exported value (or one injected by e.g. `op run`) always
+// wins over the .env file.
+func loadDotEnv(dir string) error {
+	path := filepath.Join(dir, ".env")
+
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	if err := godotenv.Load(path); err != nil {
+		return fmt.Errorf("loading %s: %w", path, err)
+	}
+
+	return nil
 }
 
 // Dir returns the directory the config was loaded from.
