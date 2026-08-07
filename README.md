@@ -8,7 +8,8 @@ The same mental model as Kustomize bases and overlays, applied to `talosctl gen 
 ## Install
 
 > [!NOTE]
-> `talstomize apply` and `talstomize diff` shell out to `talosctl`, so it must also be on your `PATH`, whichever install method you use.
+> `talstomize apply` and `talstomize diff` shell out to `talosctl`, so it must also be on your `PATH`, whichever install method you use.  
+>  
 > If your secrets bundle is sops-encrypted, [`sops`](https://github.com/getsops/sops) must be on `PATH` too - talstomize shells out to it rather than embedding it, so plaintext bundles need no extra tooling at all.
 
 ### Download precompiled binaries
@@ -151,12 +152,12 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `controlplanePatches`          | Patches applied to every `controlplane` node.                                                   |
 | `workerPatches`                | Patches applied to every `worker` node.                                                         |
 
-Patches are applied in order: implicit hostname patch → `patches` (cluster-wide) → role patches (`controlplanePatches`/`workerPatches`) → node patches, each overriding the ones before it. Each patch entry is
-either:
+Patches are applied in order: implicit hostname patch → `patches` (cluster-wide) → role patches (`controlplanePatches`/`workerPatches`) → node patches, each overriding the ones before it.
+
+Each patch entry is either:
 
 - a **string**, treated as either:
-  - a **path** to a patch file, relative to the `talstomize.yaml` it's
-    declared in, or
+  - a **path** to a patch file, relative to the `talstomize.yaml` it's declared in,
   - an **https URL** (e.g. a GitHub raw URL), fetched over the network -
     handy for sharing a common patch across clusters/repos without
     copy-pasting it. Plain `http://` is rejected: patch content becomes
@@ -166,14 +167,11 @@ either:
     `https://raw.githubusercontent.com/<user>/<repo>/<sha>/patch.yaml`).
 - an **inline YAML document**, used as the patch directly.
 
-Both strategic-merge patches (a partial Talos machine config) and
-JSON6902 patches are supported, exactly as with `talosctl`'s `--config-patch`.
+Both strategic-merge patches (a partial Talos machine config) and JSON6902 patches are supported, exactly as with `talosctl`'s `--config-patch`.
 
 ## Environment variable substitution
 
-`talstomize.yaml` and every patch (file-based or inline) are expanded for
-`${VAR}` references before being parsed, so secrets like registry
-credentials don't have to be committed in plain text:
+`talstomize.yaml` and every patch (file-based or inline) are expanded for `${VAR}` references before being parsed, so secrets like registry credentials don't have to be committed in plain text:
 
 ```yaml
 # patches/registry.yaml
@@ -188,30 +186,20 @@ machine:
 
 ```shell
 REGISTRY_USERNAME=... REGISTRY_PASSWORD=... talstomize build .
+
 # or, with a secrets manager that populates the environment for you:
 op run --env-file=.env -- talstomize build .
 ```
 
-If a `.env` file sits next to `talstomize.yaml`, it's loaded automatically
-(no need to source it yourself first) - handy for local dev, though
-anything containing real secrets should stay out of git
-(`echo .env >> .gitignore`). It follows the usual dotenv convention: it
-never overrides a variable that's already set, so an explicit `export` or
-`op run` still wins over whatever the file has.
+If a `.env` file sits next to `talstomize.yaml`, it's loaded automatically (no need to source it yourself first) - handy for local dev, though anything containing real secrets should stay out of git (`echo .env >> .gitignore`). It follows the usual dotenv convention: it never overrides a variable that's already set, so an explicit `export` or `op run` still wins over whatever the file has.
 
-If a `${VAR}` is referenced but unset in the environment, talstomize fails
-the build rather than silently rendering an empty value.
+If a `${VAR}` is referenced but unset in the environment, talstomize fails the build rather than silently rendering an empty value.
 
-Substitution runs over the whole raw file, comments included - a literal
-`${...}`-looking string in a comment is expanded too.
+Substitution runs over the whole raw file, comments included - a literal `${...}`-looking string in a comment is expanded too.
 
 ## Sops-encrypted secrets bundle
 
-The `secrets:` bundle (`talosctl gen secrets` output) can be committed to
-git encrypted with [`sops`](https://github.com/getsops/sops). talstomize
-detects this automatically - a plain YAML file (no top-level `sops:` key)
-is read as-is; a sops-encrypted one is transparently decrypted first, by
-shelling out to `sops`, which must be on `PATH` for this to work:
+The `secrets:` bundle (`talosctl gen secrets` output) can be committed to git encrypted with [`sops`](https://github.com/getsops/sops). talstomize detects this automatically - a plain YAML file (no top-level `sops:` key) is read as-is; a sops-encrypted one is transparently decrypted first, by shelling out to `sops`, which must be on `PATH` for this to work:
 
 ```shell
 talosctl gen secrets -o talos-secrets.yaml
@@ -224,20 +212,12 @@ mv talos-secrets.sops.yaml talos-secrets.yaml   # commit this
 secrets: ./talos-secrets.yaml   # now sops-encrypted, safe to commit
 ```
 
-sops resolves decryption keys the same way it always does (`SOPS_AGE_KEY_FILE`,
-`SOPS_AGE_KEY`, a GPG keyring, cloud KMS credentials, ...) - talstomize
-doesn't get involved in key management at all.
+sops resolves decryption keys the same way it always does (`SOPS_AGE_KEY_FILE`, `SOPS_AGE_KEY`, a GPG keyring, cloud KMS credentials, ...) - talstomize doesn't get involved in key management at all.
 
 ## Image Factory schematics
 
-For a node that needs Talos system extensions (drivers, `zfs`, `nvidia`,
-...) or extra kernel args, `installer.schematic` posts a customization
-document to the [Image Factory](https://factory.talos.dev) and turns the
-resulting schematic ID into the node's installer image - no more computing
-that image reference by hand. It lives under `installer` alongside
-`installer.image`, mirroring how `machine.install` itself nests image
-config in the underlying Talos schema, rather than as flat top-level
-fields:
+For a node that needs Talos system extensions (drivers, `zfs`, `nvidia`, ...) or extra kernel args, `installer.schematic` posts a customization
+document to the [Image Factory](https://factory.talos.dev) and turns the resulting schematic ID into the node's installer image. It lives under `installer` alongside `installer.image`, mirroring how `machine.install` itself nests image config in the underlying Talos schema, rather than as flat top-level fields:
 
 ```yaml
 # talstomize.yaml
@@ -253,14 +233,7 @@ installer:
           - siderolabs/iscsi-tools
 ```
 
-This resolves (once per unique customization, memoized - a schematic
-shared by several nodes only hits the Factory once) to
-`machine.install.image: factory.talos.dev/metal-installer/<schematic
-id>:v1.13.8`, applied the same way an explicit `installer.image` would be.
-`nodes.<name>.installer.schematic` overrides it per node, for hardware
-that needs its own extensions (e.g. one node with a GPU).
+This resolves (once per unique customization, memoized - a schematic shared by several nodes only hits the Factory once) to `machine.install.image: factory.talos.dev/metal-installer/<schematic id>:v1.13.8`, applied the same way an explicit `installer.image` would be. `nodes.<name>.installer.schematic` overrides it per node, for hardware that needs its own extensions (e.g. one node with a GPU).
 
-Unlike everything else talstomize does, resolving a schematic needs
-network access to `factory.talos.dev` - `build`/`apply` will fail if it's
-unreachable. Leaving `installer` unset entirely avoids this, same as
-today.
+>[!NOTE]
+> Unlike everything else talstomize does, resolving a schematic needs network access to `factory.talos.dev` - `build`/`apply` will fail if it's unreachable. Leaving `installer` unset entirely avoids this.
