@@ -30,6 +30,28 @@ type Node struct {
 	IP      string      `yaml:"ip"`
 	Kind    string      `yaml:"kind"`
 	Patches []yaml.Node `yaml:"patches,omitempty"`
+
+	// Installer overrides Config.Installer for this node only.
+	Installer NodeInstaller `yaml:"installer,omitempty"`
+}
+
+// NodeInstaller overrides Installer for a single node (not merged - a full
+// replacement). No TalosVersion: that's cluster-wide only.
+type NodeInstaller struct {
+	// Image is a literal install image reference. Mutually exclusive with
+	// Schematic.
+	Image string `yaml:"image,omitempty"`
+
+	// Schematic overrides Installer.Schematic for this node. Mutually
+	// exclusive with Image. A zero Kind (SchematicSet returns false) means
+	// unset - decoding into *yaml.Node instead of yaml.Node silently loses
+	// the node's content, so this must stay a value, not a pointer.
+	Schematic yaml.Node `yaml:"schematic,omitempty"`
+}
+
+// SchematicSet reports whether i has a schematic set.
+func (i NodeInstaller) SchematicSet() bool {
+	return i.Schematic.Kind != 0
 }
 
 // Config is the parsed content of a talstomize.yaml file.
@@ -51,6 +73,11 @@ type Config struct {
 	// Optional; defaults to "cluster.local".
 	DNSDomain string `yaml:"dnsDomain,omitempty"`
 
+	// Installer configures the cluster-wide default install image,
+	// overridable per node via Node.Installer. Mirrors machine.install's
+	// own nesting instead of a flurry of flat top-level fields.
+	Installer Installer `yaml:"installer,omitempty"`
+
 	Nodes map[string]Node `yaml:"nodes"`
 
 	// Patches apply to every node regardless of role, before
@@ -63,6 +90,35 @@ type Config struct {
 	// dir is the directory the config file was loaded from. Relative paths
 	// in the config (secrets, patch files) are resolved against it.
 	dir string
+}
+
+// Installer configures how a node's machine.install.image is determined:
+// either a literal Image reference, or an Image Factory
+// (factory.talos.dev) Schematic customization document (extraKernelArgs,
+// systemExtensions, ...) resolved to a schematic ID and combined with
+// TalosVersion. Image and Schematic are mutually exclusive. Only the
+// "metal" platform is supported for now.
+type Installer struct {
+	// Image is the equivalent of talosctl gen config's --install-image.
+	// Optional; unlike bare talosctl, talstomize computes no smart
+	// default - leave both Image and Schematic unset and
+	// machine.install.image is left for patches to set, same as today.
+	Image string `yaml:"image,omitempty"`
+
+	Schematic yaml.Node `yaml:"schematic,omitempty"`
+
+	// TalosVersion tags the installer image computed from Schematic (e.g.
+	// "v1.13.8"). Only consulted when Schematic is set; ignored
+	// otherwise. Optional; defaults to the Talos version bundled with
+	// talstomize's machinery dependency. Unrelated to talosctl gen
+	// config's --talos-version, which is an unrelated backwards-compat
+	// config-schema flag, not an installer image tag.
+	TalosVersion string `yaml:"talosVersion,omitempty"`
+}
+
+// SchematicSet reports whether i has a schematic set.
+func (i Installer) SchematicSet() bool {
+	return i.Schematic.Kind != 0
 }
 
 // Load reads and validates a talstomize config. path may point directly at a
@@ -151,6 +207,10 @@ func (c *Config) validate() error {
 		errs = append(errs, "at least one node is required")
 	}
 
+	if c.Installer.Image != "" && c.Installer.SchematicSet() {
+		errs = append(errs, "installer.image and installer.schematic cannot both be set")
+	}
+
 	for name, node := range c.Nodes {
 		if node.IP == "" {
 			errs = append(errs, fmt.Sprintf("node %q: ip is required", name))
@@ -160,6 +220,10 @@ func (c *Config) validate() error {
 		case KindControlPlane, KindWorker:
 		default:
 			errs = append(errs, fmt.Sprintf("node %q: kind must be %q or %q, got %q", name, KindControlPlane, KindWorker, node.Kind))
+		}
+
+		if node.Installer.Image != "" && node.Installer.SchematicSet() {
+			errs = append(errs, fmt.Sprintf("node %q: installer.image and installer.schematic cannot both be set", name))
 		}
 	}
 

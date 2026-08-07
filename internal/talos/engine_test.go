@@ -200,6 +200,70 @@ workerPatches: []
 	}
 }
 
+func TestEngineRenderNodeInstallImage(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+installer:
+  image: ghcr.io/siderolabs/installer:v1.9.5
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+    installer:
+      image: factory.talos.dev/metal-installer/abc123:v1.9.5
+  nodeb:
+    ip: 10.5.0.12
+    kind: worker
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	nodeaYAML := mustString(t, mustRenderNode(t, engine, "nodea"))
+
+	if !hasSetLine(nodeaYAML, "image: factory.talos.dev/metal-installer/abc123:v1.9.5") {
+		t.Errorf("nodea config should use its own installer.image override, got:\n%s", nodeaYAML)
+	}
+
+	if hasSetLine(nodeaYAML, "image: ghcr.io/siderolabs/installer:v1.9.5") {
+		t.Errorf("nodea config should not fall back to the cluster-wide installer.image once overridden, got:\n%s", nodeaYAML)
+	}
+
+	nodebYAML := mustString(t, mustRenderNode(t, engine, "nodeb"))
+
+	if !hasSetLine(nodebYAML, "image: ghcr.io/siderolabs/installer:v1.9.5") {
+		t.Errorf("nodeb config should fall back to the cluster-wide installer.image, got:\n%s", nodebYAML)
+	}
+}
+
+func mustRenderNode(t *testing.T, engine *talos.Engine, name string) tconfig.Provider {
+	t.Helper()
+
+	rendered, err := engine.RenderNode(name)
+	if err != nil {
+		t.Fatalf("RenderNode(%s): %v", name, err)
+	}
+
+	return rendered
+}
+
 func TestEngineRenderNodeDNSDomain(t *testing.T) {
 	dir := t.TempDir()
 

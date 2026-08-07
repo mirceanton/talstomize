@@ -35,17 +35,20 @@ assert_unset() {
   fi
 }
 
-echo "====> Validating nodea (controlplane) got its hostname, cluster-wide, per-node, and role patches..."
+echo "====> Validating nodea (controlplane) got its hostname, cluster-wide, per-node, and role patches, plus its own installImage override..."
 assert_set examples/simple/_out/nodea.yaml "hostname: nodea"
 assert_set examples/simple/_out/nodea.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodea.yaml "disk: /dev/sda"
 assert_set examples/simple/_out/nodea.yaml "allowSchedulingOnControlPlanes: true"
+assert_set examples/simple/_out/nodea.yaml "image: factory.talos.dev/metal-installer/abc123:v1.9.5"
+assert_unset examples/simple/_out/nodea.yaml "image: ghcr.io/siderolabs/installer:v1.9.5"
 
-echo "====> Validating nodeb (worker) got its hostname, cluster-wide, and inline patch, but not nodea's..."
+echo "====> Validating nodeb (worker) got its hostname, cluster-wide, and inline patch, but not nodea's, and fell back to the cluster-wide installImage..."
 assert_set examples/simple/_out/nodeb.yaml "hostname: nodeb"
 assert_set examples/simple/_out/nodeb.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodeb.yaml "destination: /var/lib/longhorn"
 assert_unset examples/simple/_out/nodeb.yaml "disk: /dev/sda"
+assert_set examples/simple/_out/nodeb.yaml "image: ghcr.io/siderolabs/installer:v1.9.5"
 
 echo "====> Validating a talosctl client config was generated too..."
 assert_set examples/simple/_out/talosconfig "context: home-cluster"

@@ -117,8 +117,13 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`. May be sops-encrypted.              |
 | `additionalSubjectAltNames`    | Optional; extra SANs added to both the machine and kube-apiserver certificates on every node (`talosctl gen config`'s `--additional-sans`). |
 | `dnsDomain`                    | Optional; the cluster's DNS domain (`talosctl gen config`'s `--dns-domain`). Defaults to `cluster.local`. |
+| `installer.image`              | Optional; the cluster-wide default installer image (`talosctl gen config`'s `--install-image`). Overridable per node. Unlike bare `talosctl`, no smart default is computed - leave `installer` unset and `machine.install.image` is left for patches to set. Mutually exclusive with `installer.schematic`. |
+| `installer.schematic`          | Optional; a [Image Factory](https://factory.talos.dev) schematic customization document (`extraKernelArgs`, `systemExtensions`, ...), resolved to a schematic ID and combined with `installer.talosVersion` into the cluster-wide default installer image. Overridable (fully replaced, not merged) per node. Mutually exclusive with `installer.image`. Only the `metal` platform is supported for now. |
+| `installer.talosVersion`       | Optional; tags the `installer.schematic`-computed installer image (e.g. `v1.13.8`). Only consulted when `installer.schematic` is set. Defaults to the Talos version bundled with talstomize's machinery dependency. **Not** the same thing as `talosctl gen config`'s `--talos-version`, which is an unrelated backwards-compat config-schema flag, not an installer image tag. |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
+| `nodes.<name>.installer.image` | Optional; overrides `installer.image` for this node only. Mutually exclusive with `nodes.<name>.installer.schematic`. No `nodes.<name>.installer.talosVersion` - that's cluster-wide only. |
+| `nodes.<name>.installer.schematic` | Optional; overrides `installer.schematic` for this node only (a full replacement, not merged). Mutually exclusive with `nodes.<name>.installer.image`. |
 | `nodes.<name>.patches`         | Patches applied to this node only, after the cluster-wide and role-wide patches.                |
 | `patches`                      | Patches applied to every node, regardless of role - the equivalent of `talosctl gen config`'s unprefixed `--config-patch`. |
 | `controlplanePatches`          | Patches applied to every `controlplane` node.                                                   |
@@ -193,3 +198,40 @@ secrets: ./talos-secrets.yaml   # now sops-encrypted, safe to commit
 sops resolves decryption keys the same way it always does (`SOPS_AGE_KEY_FILE`,
 `SOPS_AGE_KEY`, a GPG keyring, cloud KMS credentials, ...) - talstomize
 doesn't get involved in key management at all.
+
+## Image Factory schematics
+
+For a node that needs Talos system extensions (drivers, `zfs`, `nvidia`,
+...) or extra kernel args, `installer.schematic` posts a customization
+document to the [Image Factory](https://factory.talos.dev) and turns the
+resulting schematic ID into the node's installer image - no more computing
+that image reference by hand. It lives under `installer` alongside
+`installer.image`, mirroring how `machine.install` itself nests image
+config in the underlying Talos schema, rather than as flat top-level
+fields:
+
+```yaml
+# talstomize.yaml
+installer:
+  talosVersion: v1.13.8
+  schematic:
+    customization:
+      extraKernelArgs:
+        - cpufreq.default_governor=performance
+      systemExtensions:
+        officialExtensions:
+          - siderolabs/zfs
+          - siderolabs/iscsi-tools
+```
+
+This resolves (once per unique customization, memoized - a schematic
+shared by several nodes only hits the Factory once) to
+`machine.install.image: factory.talos.dev/metal-installer/<schematic
+id>:v1.13.8`, applied the same way an explicit `installer.image` would be.
+`nodes.<name>.installer.schematic` overrides it per node, for hardware
+that needs its own extensions (e.g. one node with a GPU).
+
+Unlike everything else talstomize does, resolving a schematic needs
+network access to `factory.talos.dev` - `build`/`apply` will fail if it's
+unreachable. Leaving `installer` unset entirely avoids this, same as
+today.
