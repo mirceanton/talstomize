@@ -84,10 +84,10 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
    workerPatches: []
    ```
 
-3. Render the configs (one file per node, written as `<node>.yaml` to `./_out` next to the `talstomize.yaml` by default):
+3. Render the configs (one file per node, written as `<node>.yaml` to `./_out` next to the `talstomize.yaml` by default, plus a `talosctl` client config named `talosconfig`):
 
    ```shell
-   talstomize build .                  # writes ./_out/nodea.yaml, ./_out/nodeb.yaml, ...
+   talstomize build .                  # writes ./_out/nodea.yaml, ./_out/nodeb.yaml, ./_out/talosconfig, ...
    talstomize build . -o ./rendered    # write to ./rendered instead
    ```
 

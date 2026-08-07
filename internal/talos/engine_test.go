@@ -285,6 +285,62 @@ workerPatches: []
 	}
 }
 
+func TestEngineTalosconfig(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+  nodeb:
+    ip: 10.5.0.12
+    kind: worker
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	talosconfig, err := engine.Talosconfig()
+	if err != nil {
+		t.Fatalf("Talosconfig: %v", err)
+	}
+
+	if talosconfig.Context != "test-cluster" {
+		t.Errorf("Talosconfig().Context = %q, want %q", talosconfig.Context, "test-cluster")
+	}
+
+	ctx, ok := talosconfig.Contexts["test-cluster"]
+	if !ok {
+		t.Fatalf("Talosconfig().Contexts missing %q, got %v", "test-cluster", talosconfig.Contexts)
+	}
+
+	// Only the controlplane node's IP is a valid API endpoint, not the worker's.
+	if got, want := strings.Join(ctx.Endpoints, ","), "10.5.0.11"; got != want {
+		t.Errorf("Talosconfig endpoints = %q, want %q", got, want)
+	}
+
+	if _, err := talosconfig.Bytes(); err != nil {
+		t.Errorf("Talosconfig().Bytes(): %v", err)
+	}
+}
+
 // TestEngineRenderNodeSopsSecrets exercises the full pipeline with a
 // sops-encrypted secrets bundle: generate a plaintext bundle, encrypt it
 // with a disposable test-only age key (testdata/age-key.txt, used for
