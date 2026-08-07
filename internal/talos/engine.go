@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate"
@@ -15,6 +17,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 
 	tstomcfg "github.com/mirceanton/talstomize/internal/config"
+	tstomsops "github.com/mirceanton/talstomize/internal/sops"
 )
 
 // Engine renders per-node Talos machine configs from a talstomize Config.
@@ -26,7 +29,7 @@ type Engine struct {
 // NewEngine loads the referenced secrets bundle and prepares config
 // generation for the given talstomize config.
 func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
-	bundle, err := secrets.LoadBundle(cfg.SecretsPath())
+	bundle, err := loadSecretsBundle(cfg.SecretsPath())
 	if err != nil {
 		return nil, fmt.Errorf(
 			"loading secrets bundle from %s (generate one with `talosctl gen secrets -o %s`): %w",
@@ -58,6 +61,24 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 	}
 
 	return &Engine{cfg: cfg, input: input}, nil
+}
+
+// loadSecretsBundle reads the secrets bundle at path, transparently
+// decrypting it first if it's a sops-encrypted file, so a `talosctl gen
+// secrets` bundle can be committed to git the same way as any other
+// sops-managed secret.
+func loadSecretsBundle(path string) (*secrets.Bundle, error) {
+	raw, err := tstomsops.MaybeDecrypt(path)
+	if err != nil {
+		return nil, err
+	}
+
+	bundle := &secrets.Bundle{Clock: secrets.NewClock()}
+	if err := yaml.Unmarshal(raw, bundle); err != nil {
+		return nil, err
+	}
+
+	return bundle, nil
 }
 
 // RenderNode builds the final, patched machine config for a single node:

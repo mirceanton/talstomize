@@ -2,6 +2,7 @@ package talos_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -145,6 +146,66 @@ func hasSetLine(yaml, needle string) bool {
 	}
 
 	return false
+}
+
+// TestEngineRenderNodeSopsSecrets exercises the full pipeline with a
+// sops-encrypted secrets bundle: generate a plaintext bundle, encrypt it
+// with a disposable test-only age key (testdata/age-key.txt, used for
+// nothing else), point talstomize.yaml at the encrypted file, and confirm
+// NewEngine/RenderNode transparently decrypt it. Requires sops on PATH;
+// skipped otherwise (see .mise.toml, where it's pinned for CI).
+func TestEngineRenderNodeSopsSecrets(t *testing.T) {
+	if _, err := exec.LookPath("sops"); err != nil {
+		t.Skip("sops not found on PATH")
+	}
+
+	const recipient = "age1a6eapksmqtlc2a88a30s8j8e5ts5hn7c8hqpj6rcrzzx2xwryc8qj8hrp5"
+
+	keyPath, err := filepath.Abs("testdata/age-key.txt")
+	if err != nil {
+		t.Fatalf("resolving key path: %v", err)
+	}
+
+	t.Setenv("SOPS_AGE_KEY_FILE", keyPath)
+
+	plainDir := t.TempDir()
+	writeSecretsBundle(t, plainDir)
+
+	encrypted, err := exec.Command("sops", "--encrypt", "--age", recipient, filepath.Join(plainDir, "talos-secrets.yaml")).Output()
+	if err != nil {
+		t.Fatalf("sops --encrypt: %v", err)
+	}
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "talos-secrets.yaml"), string(encrypted))
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	if _, err := engine.RenderNode("nodea"); err != nil {
+		t.Fatalf("RenderNode(nodea): %v", err)
+	}
 }
 
 func TestEngineRenderNodeEnvsubst(t *testing.T) {

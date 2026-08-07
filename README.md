@@ -9,6 +9,7 @@ The same mental model as Kustomize bases and overlays, applied to `talosctl gen 
 
 > [!NOTE]
 > `talstomize apply` shells out to `talosctl`, so it must also be on your `PATH`, whichever install method you use.
+> If your secrets bundle is sops-encrypted, [`sops`](https://github.com/getsops/sops) must be on `PATH` too - talstomize shells out to it rather than embedding it, so plaintext bundles need no extra tooling at all.
 
 ### Download precompiled binaries
 
@@ -107,7 +108,7 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `clusterName`                  | Passed to `talosctl gen config` equivalent as the cluster name.                                 |
 | `controlPlaneEndpoint`         | The cluster's control plane endpoint (e.g. a VIP or load balancer URL).                         |
 | `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency. A leading `v` (e.g. `v1.31.1`) is accepted and stripped. |
-| `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`.                                    |
+| `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`. May be sops-encrypted.              |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
 | `nodes.<name>.patches`         | Patches applied to this node only, after the role-wide patches.                                 |
@@ -152,3 +153,26 @@ the build rather than silently rendering an empty value.
 
 Substitution runs over the whole raw file, comments included - a literal
 `${...}`-looking string in a comment is expanded too.
+
+## Sops-encrypted secrets bundle
+
+The `secrets:` bundle (`talosctl gen secrets` output) can be committed to
+git encrypted with [`sops`](https://github.com/getsops/sops). talstomize
+detects this automatically - a plain YAML file (no top-level `sops:` key)
+is read as-is; a sops-encrypted one is transparently decrypted first, by
+shelling out to `sops`, which must be on `PATH` for this to work:
+
+```shell
+talosctl gen secrets -o talos-secrets.yaml
+sops --encrypt --age <recipient> talos-secrets.yaml > talos-secrets.sops.yaml
+mv talos-secrets.sops.yaml talos-secrets.yaml   # commit this
+```
+
+```yaml
+# talstomize.yaml
+secrets: ./talos-secrets.yaml   # now sops-encrypted, safe to commit
+```
+
+sops resolves decryption keys the same way it always does (`SOPS_AGE_KEY_FILE`,
+`SOPS_AGE_KEY`, a GPG keyring, cloud KMS credentials, ...) - talstomize
+doesn't get involved in key management at all.

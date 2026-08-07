@@ -1,0 +1,5 @@
+# DISPOSABLE key generated solely to encrypt testdata/encrypted.yaml for
+# TestMaybeDecrypt. Not used for anything else; safe to commit.
+# created: 2026-08-07T15:36:54+03:00
+# public key: age1a6eapksmqtlc2a88a30s8j8e5ts5hn7c8hqpj6rcrzzx2xwryc8qj8hrp5
+AGE-SECRET-KEY-1C35T6UTLV4QQPTCY2FJ30QMSGE8MXC7EL60QS5N2ZWZKST8HJLJQG8Y7R5
