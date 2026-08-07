@@ -52,11 +52,19 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		}
 	}
 
-	input, err := generate.NewInput(cfg.ClusterName, cfg.ControlPlaneEndpoint, kubernetesVersion,
+	opts := []generate.Option{
 		generate.WithSecretsBundle(bundle),
 		generate.WithEndpointList(endpoints),
 		generate.WithAdditionalSubjectAltNames(cfg.AdditionalSubjectAltNames),
-	)
+	}
+
+	// WithDNSDomain unconditionally overwrites the "cluster.local" default,
+	// so it must only be added when actually set.
+	if cfg.DNSDomain != "" {
+		opts = append(opts, generate.WithDNSDomain(cfg.DNSDomain))
+	}
+
+	input, err := generate.NewInput(cfg.ClusterName, cfg.ControlPlaneEndpoint, kubernetesVersion, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("preparing config generation: %w", err)
 	}

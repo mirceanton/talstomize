@@ -200,6 +200,91 @@ workerPatches: []
 	}
 }
 
+func TestEngineRenderNodeDNSDomain(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+dnsDomain: cluster.internal
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	nodea, err := engine.RenderNode("nodea")
+	if err != nil {
+		t.Fatalf("RenderNode(nodea): %v", err)
+	}
+
+	nodeaYAML := mustString(t, nodea)
+
+	if !hasSetLine(nodeaYAML, "dnsDomain: cluster.internal") {
+		t.Errorf("nodea config missing dnsDomain override, got:\n%s", nodeaYAML)
+	}
+
+	if strings.Contains(nodeaYAML, "cluster.local") {
+		t.Errorf("nodea config should not fall back to the default cluster.local once dnsDomain is set, got:\n%s", nodeaYAML)
+	}
+}
+
+func TestEngineRenderNodeDNSDomainDefault(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	nodea, err := engine.RenderNode("nodea")
+	if err != nil {
+		t.Fatalf("RenderNode(nodea): %v", err)
+	}
+
+	if !hasSetLine(mustString(t, nodea), "dnsDomain: cluster.local") {
+		t.Errorf("nodea config should keep the default cluster.local dnsDomain when unset")
+	}
+}
+
 // TestEngineRenderNodeSopsSecrets exercises the full pipeline with a
 // sops-encrypted secrets bundle: generate a plaintext bundle, encrypt it
 // with a disposable test-only age key (testdata/age-key.txt, used for
