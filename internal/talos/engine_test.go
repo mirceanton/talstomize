@@ -81,6 +81,10 @@ nodes:
                 type: bind
                 source: /var/lib/longhorn
                 options: ["bind", "rshared", "rw"]
+patches:
+  - machine:
+      sysctls:
+        net.core.somaxconn: "1024"
 controlplanePatches:
   - ./patches/controlplane-common.yaml
 workerPatches: []
@@ -107,7 +111,7 @@ workerPatches: []
 
 	nodeaYAML := mustString(t, nodea)
 
-	for _, want := range []string{"hostname: nodea", "disk: /dev/sda", "allowSchedulingOnControlPlanes: true"} {
+	for _, want := range []string{"hostname: nodea", "disk: /dev/sda", "allowSchedulingOnControlPlanes: true", "net.core.somaxconn:"} {
 		if !hasSetLine(nodeaYAML, want) {
 			t.Errorf("nodea config missing %q as a set (uncommented) line", want)
 		}
@@ -120,7 +124,7 @@ workerPatches: []
 
 	nodebYAML := mustString(t, nodeb)
 
-	for _, want := range []string{"hostname: nodeb", "destination: /var/lib/longhorn"} {
+	for _, want := range []string{"hostname: nodeb", "destination: /var/lib/longhorn", "net.core.somaxconn:"} {
 		if !hasSetLine(nodebYAML, want) {
 			t.Errorf("nodeb config missing %q as a set (uncommented) line", want)
 		}

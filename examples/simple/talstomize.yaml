@@ -24,6 +24,11 @@ nodes:
                 source: /var/lib/longhorn
                 options: ["bind", "rshared", "rw"]
 
+patches:
+  - machine:
+      sysctls:
+        net.core.somaxconn: "1024"
+
 controlplanePatches:
   - ./patches/controlplane-common.yaml
 
