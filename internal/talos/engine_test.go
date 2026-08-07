@@ -152,6 +152,54 @@ func hasSetLine(yaml, needle string) bool {
 	return false
 }
 
+func TestEngineRenderNodeAdditionalSubjectAltNames(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+additionalSubjectAltNames:
+  - cluster.example.com
+  - 10.5.0.99
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	nodea, err := engine.RenderNode("nodea")
+	if err != nil {
+		t.Fatalf("RenderNode(nodea): %v", err)
+	}
+
+	nodeaYAML := mustString(t, nodea)
+
+	// Both the machine cert and the kube-apiserver cert should carry the
+	// additional SANs - talosctl's --additional-sans covers both.
+	for _, want := range []string{"cluster.example.com", "10.5.0.99"} {
+		if strings.Count(nodeaYAML, want) < 2 {
+			t.Errorf("nodea config should contain %q at least twice (machine.certSANs and cluster.apiServer.certSANs), got:\n%s", want, nodeaYAML)
+		}
+	}
+}
+
 // TestEngineRenderNodeSopsSecrets exercises the full pipeline with a
 // sops-encrypted secrets bundle: generate a plaintext bundle, encrypt it
 // with a disposable test-only age key (testdata/age-key.txt, used for

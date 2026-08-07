@@ -115,6 +115,7 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `controlPlaneEndpoint`         | The cluster's control plane endpoint (e.g. a VIP or load balancer URL).                         |
 | `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency. A leading `v` (e.g. `v1.31.1`) is accepted and stripped. |
 | `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`. May be sops-encrypted.              |
+| `additionalSubjectAltNames`    | Optional; extra SANs added to both the machine and kube-apiserver certificates on every node (`talosctl gen config`'s `--additional-sans`). |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
 | `nodes.<name>.patches`         | Patches applied to this node only, after the cluster-wide and role-wide patches.                |
