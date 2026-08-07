@@ -131,3 +131,50 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("Load: expected an error, got nil")
 	}
 }
+
+func TestLoadEnvsubst(t *testing.T) {
+	t.Setenv("TALSTOMIZE_TEST_CLUSTER_NAME", "envsubst-cluster")
+
+	dir := t.TempDir()
+
+	writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: ${TALSTOMIZE_TEST_CLUSTER_NAME}
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.ClusterName != "envsubst-cluster" {
+		t.Errorf("ClusterName = %q, want %q", cfg.ClusterName, "envsubst-cluster")
+	}
+}
+
+func TestLoadEnvsubstUndefined(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: ${TALSTOMIZE_TEST_UNDEFINED_CLUSTER_NAME}
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	if _, err := Load(dir); err == nil {
+		t.Fatal("Load: expected an error for an undefined variable, got nil")
+	}
+}
