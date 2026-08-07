@@ -118,8 +118,16 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 Patches are applied in order: implicit hostname patch → role patches → node patches, each overriding the ones before it. Each patch entry is
 either:
 
-- a **string**, treated as a path to a patch file (relative to the
-  `talstomize.yaml` it's declared in), or
+- a **string**, treated as either:
+  - a **path** to a patch file, relative to the `talstomize.yaml` it's
+    declared in, or
+  - an **https URL** (e.g. a GitHub raw URL), fetched over the network -
+    handy for sharing a common patch across clusters/repos without
+    copy-pasting it. Plain `http://` is rejected: patch content becomes
+    machine config, and an unauthenticated response can be tampered with
+    in transit. Prefer pinning to a commit SHA rather than a branch name
+    for a reproducible build (e.g.
+    `https://raw.githubusercontent.com/<user>/<repo>/<sha>/patch.yaml`).
 - an **inline YAML document**, used as the patch directly.
 
 Both strategic-merge patches (a partial Talos machine config) and

@@ -208,6 +208,55 @@ workerPatches: []
 	}
 }
 
+// TestEngineRenderNodeURLPatch checks that a patch entry parsed as a URL is
+// actually routed to network fetching rather than treated as a literal
+// file path. It doesn't re-verify the fetch mechanics themselves (success,
+// 404 handling, https enforcement) - those are covered directly in
+// internal/source's own tests against a real httptest TLS server, which
+// this package-external test can't reach (its unexported http client isn't
+// visible here). ".invalid" is reserved by RFC 2606 to never resolve, so
+// this fails fast and deterministically with no real network dependency.
+func TestEngineRenderNodeURLPatch(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+    patches:
+      - https://talstomize.invalid/patch.yaml
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	_, err = engine.RenderNode("nodea")
+	if err == nil {
+		t.Fatal("RenderNode: expected an error fetching an unreachable URL patch, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "fetching") {
+		t.Errorf("RenderNode error = %q, want it to mention fetching (i.e. the patch was treated as a URL, not a file path)", err)
+	}
+}
+
 func TestEngineRenderNodeEnvsubst(t *testing.T) {
 	t.Setenv("TALSTOMIZE_TEST_REGISTRY_USER", "envsubst-user")
 
