@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
-	"github.com/siderolabs/talos/pkg/machinery/config/configdiff"
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 
 	"github.com/mirceanton/talstomize/internal/config"
@@ -21,6 +19,7 @@ func newDiffCommand() *cobra.Command {
 	var (
 		file       string
 		nodeFilter string
+		output     string
 	)
 
 	cmd := &cobra.Command{
@@ -35,11 +34,22 @@ func newDiffCommand() *cobra.Command {
 			"talstomize.yaml (talosVersion, kubernetesVersion, or a schematic change) only takes " +
 			"effect once you actually run `talosctl upgrade`/`upgrade-k8s` yourself; `diff` is how " +
 			"you find out that's still pending after `apply`.\n\n" +
+			"--output/-o controls how results are presented: \"plain\" (default) prints " +
+			"human-readable text; \"diff\" prints a single unified diff covering every node, " +
+			"suitable for redirecting to a .diff file and opening in an editor (e.g. " +
+			"`talstomize diff -o diff > cluster.diff`); \"pretty\" opens an interactive terminal " +
+			"viewer with one tab per node.\n\n" +
 			"Anything after `--` is passed through to talosctl as-is, e.g.\n" +
 			"  talstomize diff -f . -- --insecure\n\n" +
 			"Exits 0 if every node matches, 1 if any node differs (or on error).",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch output {
+			case "plain", "diff", "pretty":
+			default:
+				return fmt.Errorf("invalid --output %q: must be one of plain, diff, pretty", output)
+			}
+
 			passthrough, err := passthroughArgs(cmd, args)
 			if err != nil {
 				return err
@@ -65,9 +75,9 @@ func newDiffCommand() *cobra.Command {
 				return fmt.Errorf("no matching nodes")
 			}
 
-			out := cmd.OutOrStdout()
 			errOut := cmd.ErrOrStderr()
-			anyDiff := false
+
+			report := driftReport{Nodes: make([]nodeDriftResult, 0, len(names))}
 
 			for _, name := range names {
 				node, _ := engine.Node(name)
@@ -82,47 +92,33 @@ func newDiffCommand() *cobra.Command {
 					return fmt.Errorf("node %q: fetching running config: %w", name, err)
 				}
 
-				configDiff, err := configdiff.DiffConfigs(running, rendered)
-				if err != nil {
-					return fmt.Errorf("node %q: diffing: %w", name, err)
-				}
-
-				extraLines, err := diffLiveState(engine, node, rendered, errOut, name, passthrough)
+				result, err := computeNodeDrift(engine, node, rendered, running, errOut, name, passthrough)
 				if err != nil {
 					return err
 				}
 
-				if configDiff == "" && len(extraLines) == 0 {
-					fmt.Fprintf(out, "==> %s (%s): no differences\n", name, node.IP)
-
-					continue
-				}
-
-				anyDiff = true
-
-				fmt.Fprintf(out, "==> %s (%s):\n", name, node.IP)
-
-				if configDiff != "" {
-					fmt.Fprintln(out, configDiff)
-				}
-
-				for _, line := range extraLines {
-					fmt.Fprintln(out, line)
-				}
+				report.Nodes = append(report.Nodes, result)
 			}
 
-			k8sDrift, err := diffKubernetesVersion(engine, errOut, passthrough)
+			report.Kubernetes, err = computeKubernetesDrift(engine, errOut, passthrough)
 			if err != nil {
 				return err
 			}
 
-			if k8sDrift != "" {
-				anyDiff = true
-
-				fmt.Fprintf(out, "==> kubernetes: %s\n", k8sDrift)
+			switch output {
+			case "plain":
+				renderPlain(report, cmd.OutOrStdout())
+			case "diff":
+				if err := renderDiff(report, cmd.OutOrStdout()); err != nil {
+					return err
+				}
+			case "pretty":
+				if err := runPretty(report); err != nil {
+					return err
+				}
 			}
 
-			if anyDiff {
+			if report.drifted() {
 				os.Exit(1)
 			}
 
@@ -132,6 +128,7 @@ func newDiffCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&file, "file", "f", "", "path to a talstomize.yaml file, or a directory containing one (defaults to the current directory); all relative paths in it resolve against that file's directory")
 	cmd.Flags().StringVar(&nodeFilter, "node", "", "only diff this node (by name)")
+	cmd.Flags().StringVarP(&output, "output", "o", "plain", "output format: plain, diff, or pretty")
 
 	return cmd
 }
@@ -168,101 +165,4 @@ func getRunningConfig(ip string, passthrough []string, stderr io.Writer) (tconfi
 	}
 
 	return provider, nil
-}
-
-// diffLiveState compares node's actual live state against what rendered
-// declares - its running Talos OS version, and, if a schematic is
-// configured (Engine.EffectiveCustomization), its installed system
-// extensions and kernel args - returning one line per check that found
-// drift (nil if everything matches). This is what a plain machine-config
-// diff can't catch: bumping installer.talosVersion and applying config
-// only changes the *declared* install image, not what's actually booted -
-// the two can already agree with each other while the real node is still
-// on the old version.
-func diffLiveState(engine *talos.Engine, node config.Node, rendered tconfig.Provider, errOut io.Writer, name string, passthrough []string) ([]string, error) {
-	var lines []string
-
-	if target := rendered.Machine().Install().Image(); target != "" {
-		running, err := getRunningTalosVersion(errOut, node.IP, passthrough)
-		if err != nil {
-			return nil, fmt.Errorf("node %q: fetching running Talos version: %w", name, err)
-		}
-
-		if drifted, ok := talos.TalosVersionDrift(running, target); ok && drifted {
-			lines = append(lines, fmt.Sprintf("    talos: running %s, want %s (%s)", running, talos.ImageTag(target), target))
-		}
-	}
-
-	customization, ok, err := engine.EffectiveCustomization(node)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: resolving schematic: %w", name, err)
-	}
-
-	if !ok {
-		return lines, nil
-	}
-
-	installed, err := getInstalledExtensions(errOut, node.IP, passthrough)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: fetching installed extensions: %w", name, err)
-	}
-
-	desiredExtensions := customization.Customization.SystemExtensions.OfficialExtensions
-	if missing, unexpected := talos.ExtensionDrift(installed, desiredExtensions); len(missing) > 0 || len(unexpected) > 0 {
-		var parts []string
-
-		if len(missing) > 0 {
-			parts = append(parts, fmt.Sprintf("missing %v", missing))
-		}
-
-		if len(unexpected) > 0 {
-			parts = append(parts, fmt.Sprintf("unexpected %v", unexpected))
-		}
-
-		lines = append(lines, "    extensions: "+strings.Join(parts, ", "))
-	}
-
-	cmdline, err := getKernelCmdline(errOut, node.IP, passthrough)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: fetching kernel cmdline: %w", name, err)
-	}
-
-	desiredArgs := customization.Customization.ExtraKernelArgs
-	if missing := talos.KernelArgDrift(cmdline, desiredArgs); len(missing) > 0 {
-		lines = append(lines, fmt.Sprintf("    kernel args: missing %v", missing))
-	}
-
-	return lines, nil
-}
-
-// diffKubernetesVersion reports whether the cluster's running Kubernetes
-// version differs from target (Engine.KubernetesVersion), returning a
-// one-line "running X, want Y" summary if so, "" if the cluster is
-// already at target.
-//
-// `talosctl upgrade-k8s --dry-run`'s plan output turns out not to be a
-// usable "is there drift" signal on its own - live-verified against a
-// real cluster already sitting at the target version, it still
-// unconditionally prints "updating <component> to version ..." action
-// lines and a manifest-annotation diff (SSA ownership metadata churn
-// unrelated to version drift). The one reliable signal in it is the
-// auto-detected current version, parsed via talos.ParseKubernetesVersion.
-func diffKubernetesVersion(engine *talos.Engine, errOut io.Writer, passthrough []string) (string, error) {
-	target := engine.KubernetesVersion()
-
-	plan, err := getK8sUpgradePlan(errOut, target, passthrough)
-	if err != nil {
-		return "", fmt.Errorf("fetching Kubernetes upgrade plan: %w", err)
-	}
-
-	running := talos.ParseKubernetesVersion(plan)
-	if running == "" {
-		return "", fmt.Errorf("could not determine the cluster's current Kubernetes version from talosctl upgrade-k8s --dry-run output")
-	}
-
-	if running == target {
-		return "", nil
-	}
-
-	return fmt.Sprintf("running %s, want %s", running, target), nil
 }
