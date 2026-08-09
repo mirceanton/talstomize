@@ -25,9 +25,10 @@ import (
 
 // Engine renders per-node Talos machine configs from a talstomize Config.
 type Engine struct {
-	cfg          *tstomcfg.Config
-	input        *generate.Input
-	talosVersion string
+	cfg               *tstomcfg.Config
+	input             *generate.Input
+	talosVersion      string
+	kubernetesVersion string
 
 	// resolveSchematic posts a schematic customization to the Image
 	// Factory and returns its ID; defaults to factory.Schematic, swappable
@@ -88,7 +89,22 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		talosVersion = tversion.Tag
 	}
 
-	return &Engine{cfg: cfg, input: input, talosVersion: talosVersion, resolveSchematic: factory.Schematic}, nil
+	return &Engine{
+		cfg:               cfg,
+		input:             input,
+		talosVersion:      talosVersion,
+		kubernetesVersion: kubernetesVersion,
+		resolveSchematic:  factory.Schematic,
+	}, nil
+}
+
+// KubernetesVersion returns the Kubernetes version every node's config is
+// rendered against (Config.KubernetesVersion, defaulted to
+// constants.DefaultKubernetesVersion when unset, with any leading "v"
+// stripped) - the same value already baked into every rendered machine
+// config, not a second source of truth.
+func (e *Engine) KubernetesVersion() string {
+	return e.kubernetesVersion
 }
 
 // Talosconfig returns the talosctl client configuration for the cluster,
@@ -135,6 +151,36 @@ func (e *Engine) effectiveInstallImage(node tstomcfg.Node) (string, error) {
 	default:
 		return "", nil
 	}
+}
+
+// EffectiveCustomization returns the parsed schematic customization
+// (extra kernel args + desired system extensions) effective for node,
+// mirroring effectiveInstallImage's precedence: node's own
+// installer.schematic, else the cluster-wide one. ok is false when
+// neither is set, or when a literal installer.image is used instead -
+// there's nothing to compare extensions/kernel args against in that case,
+// same "left for patches" reasoning as effectiveInstallImage's "" result.
+func (e *Engine) EffectiveCustomization(node tstomcfg.Node) (customization factory.Customization, ok bool, err error) {
+	var schematic yaml.Node
+
+	switch {
+	case node.Installer.Image != "":
+		return factory.Customization{}, false, nil
+	case node.Installer.SchematicSet():
+		schematic = node.Installer.Schematic
+	case e.cfg.Installer.Image != "":
+		return factory.Customization{}, false, nil
+	case e.cfg.Installer.SchematicSet():
+		schematic = e.cfg.Installer.Schematic
+	default:
+		return factory.Customization{}, false, nil
+	}
+
+	if err := schematic.Decode(&customization); err != nil {
+		return factory.Customization{}, false, fmt.Errorf("parsing schematic: %w", err)
+	}
+
+	return customization, true, nil
 }
 
 // resolveSchematicImage posts schematic to the Image Factory (memoized, so

@@ -349,6 +349,75 @@ workerPatches: []
 	}
 }
 
+func TestEngineKubernetesVersion(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+kubernetesVersion: v1.36.3
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	if got, want := engine.KubernetesVersion(), "1.36.3"; got != want {
+		t.Errorf("KubernetesVersion() = %q, want %q (leading v stripped)", got, want)
+	}
+}
+
+func TestEngineKubernetesVersionDefault(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	if got, want := engine.KubernetesVersion(), "1.36.2"; got != want {
+		t.Errorf("KubernetesVersion() = %q, want default %q", got, want)
+	}
+}
+
 func TestEngineTalosconfig(t *testing.T) {
 	dir := t.TempDir()
 

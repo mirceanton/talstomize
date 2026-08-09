@@ -23,6 +23,18 @@ var (
 	httpClient = &http.Client{Timeout: 30 * time.Second}
 )
 
+// Customization is the subset of a schematic customization document
+// talstomize reads back out (e.g. to compare against what's actually
+// installed on a node), rather than just posting opaquely to the Factory.
+type Customization struct {
+	Customization struct {
+		ExtraKernelArgs  []string `yaml:"extraKernelArgs"`
+		SystemExtensions struct {
+			OfficialExtensions []string `yaml:"officialExtensions"`
+		} `yaml:"systemExtensions"`
+	} `yaml:"customization"`
+}
+
 // Schematic posts a schematic customization document (extraKernelArgs,
 // systemExtensions, ...) to the Image Factory and returns the resulting
 // schematic ID. The same customization always produces the same ID - the

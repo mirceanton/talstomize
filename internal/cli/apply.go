@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -80,12 +79,7 @@ func newApplyCommand() *cobra.Command {
 
 				fmt.Fprintf(cmd.OutOrStdout(), "==> applying config to %s (%s)\n", name, node.IP)
 
-				run := exec.Command("talosctl", talosctlArgs...)
-				run.Stdout = cmd.OutOrStdout()
-				run.Stderr = cmd.ErrOrStderr()
-				run.Stdin = os.Stdin
-
-				if err := run.Run(); err != nil {
+				if err := runTalosctlStreaming(cmd.OutOrStdout(), cmd.ErrOrStderr(), talosctlArgs); err != nil {
 					return fmt.Errorf("applying config to node %q (%s): %w", name, node.IP, err)
 				}
 			}
