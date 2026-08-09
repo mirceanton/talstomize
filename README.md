@@ -101,7 +101,9 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
    talstomize apply -f . -- --insecure --dry-run   # multiple flags at once
    ```
 
-5. Or check what would change before applying anything:
+5. Or check what would change before applying anything - and, importantly, whether a
+   `talosVersion`/`kubernetesVersion`/`schematic` bump you already `apply`'d actually took
+   effect:
 
    ```shell
    talstomize diff -f .                # every node
@@ -117,14 +119,31 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
         install:
    -        image: ghcr.io/siderolabs/installer:v1.9.5
    +        image: ghcr.io/siderolabs/installer:v1.9.6
+       talos: running v1.13.7, want v1.13.8 (ghcr.io/siderolabs/installer:v1.13.8)
+       extensions: missing [qemu-guest-agent]
+       kernel args: missing [amdgpu.gttsize=40960]
    ==> nodeb (10.5.0.12): no differences
+   ==> kubernetes: running 1.36.2, want 1.36.3
    ```
 
    Exits `0` if every node matches, `1` if any node differs (or on error) -
    safe to use in a script or CI check.
 
 >[!IMPORTANT]
-> `apply` and `diff` are thin wrappers. `apply` renders each node's config the same way `build` does, then runs `talosctl apply-config --nodes <ip> --file <rendered>` for it. `diff` renders it the same way, fetches the node's currently running config via `talosctl get machineconfig --nodes <ip> -o yaml`, and diffs the two (encoded without comments, so the diff isn't swamped by Talos's per-field documentation).  
+> `apply` and `diff` are thin wrappers around `talosctl`, and neither one ever runs
+> `talosctl upgrade`/`upgrade-k8s` itself - actually upgrading a node's Talos OS or the
+> cluster's Kubernetes version is always a deliberate, manual step outside talstomize.
+> `apply` renders each node's config the same way `build` does, then runs
+> `talosctl apply-config --nodes <ip> --file <rendered>` for it - this reconciles machine
+> config, nothing more. `diff` renders the same way and reports every difference between
+> that and live cluster state: the running machine config (`talosctl get machineconfig`,
+> encoded without comments so the diff isn't swamped by Talos's own per-field
+> documentation), the node's actual booted Talos OS version (`talosctl get version` -
+> deliberately *not* the machine config's own `install.image` field, which only reflects
+> last-declared intent and can already agree with the rendered config even when the node
+> was never actually rebooted), and - if `installer.schematic` is set - its installed
+> system extensions and kernel args (`talosctl get extensions`/`get cmdline`), plus the
+> cluster's running Kubernetes version (`talosctl upgrade-k8s --dry-run`), once, cluster-wide.  
 > Everything after `--` is passed straight through to the underlying `talosctl` invocation, so any of its flags work (`--insecure`, `--dry-run`, `--mode`, `--talosconfig`, `--endpoints`, ...) without talstomize needing to know about them.
 
 See [`examples/simple`](./examples/simple) for a complete working example.

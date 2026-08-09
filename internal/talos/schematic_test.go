@@ -2,6 +2,7 @@ package talos
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -145,6 +146,119 @@ func TestEffectiveInstallImageSchematicError(t *testing.T) {
 	if _, err := e.effectiveInstallImage(tstomcfg.Node{}); err == nil {
 		t.Fatal("effectiveInstallImage: expected an error, got nil")
 	}
+}
+
+func TestEffectiveCustomizationNodeSchematic(t *testing.T) {
+	e := &Engine{cfg: &tstomcfg.Config{}}
+
+	node := tstomcfg.Node{
+		Installer: tstomcfg.NodeInstaller{
+			Schematic: yamlNode(t, "customization:\n  extraKernelArgs: [foo=1]\n  systemExtensions:\n    officialExtensions: [siderolabs/zfs]\n"),
+		},
+	}
+
+	got, ok, err := e.EffectiveCustomization(node)
+	if err != nil {
+		t.Fatalf("EffectiveCustomization: %v", err)
+	}
+
+	if !ok {
+		t.Fatal("EffectiveCustomization: ok = false, want true")
+	}
+
+	if want := []string{"foo=1"}; !slices.Equal(got.Customization.ExtraKernelArgs, want) {
+		t.Errorf("ExtraKernelArgs = %v, want %v", got.Customization.ExtraKernelArgs, want)
+	}
+
+	if want := []string{"siderolabs/zfs"}; !slices.Equal(got.Customization.SystemExtensions.OfficialExtensions, want) {
+		t.Errorf("OfficialExtensions = %v, want %v", got.Customization.SystemExtensions.OfficialExtensions, want)
+	}
+}
+
+func TestEffectiveCustomizationClusterSchematic(t *testing.T) {
+	e := &Engine{
+		cfg: &tstomcfg.Config{
+			Installer: tstomcfg.Installer{
+				Schematic: yamlNode(t, "customization:\n  systemExtensions:\n    officialExtensions: [siderolabs/zfs]\n"),
+			},
+		},
+	}
+
+	got, ok, err := e.EffectiveCustomization(tstomcfg.Node{})
+	if err != nil {
+		t.Fatalf("EffectiveCustomization: %v", err)
+	}
+
+	if !ok {
+		t.Fatal("EffectiveCustomization: ok = false, want true")
+	}
+
+	if want := []string{"siderolabs/zfs"}; !slices.Equal(got.Customization.SystemExtensions.OfficialExtensions, want) {
+		t.Errorf("OfficialExtensions = %v, want %v", got.Customization.SystemExtensions.OfficialExtensions, want)
+	}
+}
+
+func TestEffectiveCustomizationNodeSchematicOverridesCluster(t *testing.T) {
+	e := &Engine{
+		cfg: &tstomcfg.Config{
+			Installer: tstomcfg.Installer{
+				Schematic: yamlNode(t, "customization:\n  systemExtensions:\n    officialExtensions: [siderolabs/zfs]\n"),
+			},
+		},
+	}
+
+	node := tstomcfg.Node{
+		Installer: tstomcfg.NodeInstaller{
+			Schematic: yamlNode(t, "customization:\n  systemExtensions:\n    officialExtensions: [siderolabs/nvidia-container-toolkit-production]\n"),
+		},
+	}
+
+	got, ok, err := e.EffectiveCustomization(node)
+	if err != nil {
+		t.Fatalf("EffectiveCustomization: %v", err)
+	}
+
+	if !ok {
+		t.Fatal("EffectiveCustomization: ok = false, want true")
+	}
+
+	want := []string{"siderolabs/nvidia-container-toolkit-production"}
+	if !slices.Equal(got.Customization.SystemExtensions.OfficialExtensions, want) {
+		t.Errorf("OfficialExtensions = %v, want %v (node schematic should win)", got.Customization.SystemExtensions.OfficialExtensions, want)
+	}
+}
+
+func TestEffectiveCustomizationLiteralImageNoSchematic(t *testing.T) {
+	for name, node := range map[string]tstomcfg.Node{
+		"node installer.image": {Installer: tstomcfg.NodeInstaller{Image: "ghcr.io/siderolabs/installer:v1.13.8"}},
+		"nothing set":          {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := &Engine{cfg: &tstomcfg.Config{}}
+
+			_, ok, err := e.EffectiveCustomization(node)
+			if err != nil {
+				t.Fatalf("EffectiveCustomization: %v", err)
+			}
+
+			if ok {
+				t.Error("EffectiveCustomization: ok = true, want false (no schematic to compare against)")
+			}
+		})
+	}
+
+	t.Run("cluster-wide installer.image, no schematic anywhere", func(t *testing.T) {
+		e := &Engine{cfg: &tstomcfg.Config{Installer: tstomcfg.Installer{Image: "ghcr.io/siderolabs/installer:v1.13.8"}}}
+
+		_, ok, err := e.EffectiveCustomization(tstomcfg.Node{})
+		if err != nil {
+			t.Fatalf("EffectiveCustomization: %v", err)
+		}
+
+		if ok {
+			t.Error("EffectiveCustomization: ok = true, want false (no schematic to compare against)")
+		}
+	})
 }
 
 func TestResolveSchematicImageMemoizes(t *testing.T) {
