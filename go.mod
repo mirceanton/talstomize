@@ -1,9 +1,10 @@
 module github.com/mirceanton/talstomize
 
-go 1.26.5
+go 1.26.6
 
 require (
-	github.com/siderolabs/talos/pkg/machinery v1.13.8
+	github.com/joho/godotenv v1.5.1
+	github.com/siderolabs/talos/pkg/machinery v1.13.9
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -25,7 +26,6 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/jsimonetti/rtnetlink/v2 v2.2.1-0.20260317095713-310581b9c6ac // indirect
 	github.com/mdlayher/ethtool v0.5.1 // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect
