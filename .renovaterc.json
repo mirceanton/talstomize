@@ -6,6 +6,10 @@
             "matchDepNames": [ "go" ],
             "matchDatasources": [ "golang-version", "go" ],
             "groupName": "go"
+        },
+        {
+            "matchDepNames": [ "aqua:siderolabs/talos", "github.com/siderolabs/talos/pkg/machinery" ],
+            "groupName": "talos"
         }
     ]
 }
