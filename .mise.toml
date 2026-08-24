@@ -4,7 +4,7 @@
 # =================================================================================================
 go = "1.27.0"
 golangci-lint = "2.13.1"
-"aqua:goreleaser/goreleaser" = "2.17.1"
+"github:goreleaser/goreleaser" = "2.18.0"
 "aqua:siderolabs/talos" = "1.13.9"
 sops = "3.13.3"
 
