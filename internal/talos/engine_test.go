@@ -10,6 +10,7 @@ import (
 
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
+	"github.com/siderolabs/talos/pkg/machinery/constants"
 	"gopkg.in/yaml.v3"
 
 	"github.com/mirceanton/talstomize/internal/config"
@@ -413,7 +414,7 @@ workerPatches: []
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	if got, want := engine.KubernetesVersion(), "1.36.3"; got != want {
+	if got, want := engine.KubernetesVersion(), constants.DefaultKubernetesVersion; got != want {
 		t.Errorf("KubernetesVersion() = %q, want default %q", got, want)
 	}
 }
