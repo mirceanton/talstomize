@@ -39,20 +39,25 @@ echo "====> Validating nodea (controlplane) got its hostname, cluster-wide, per-
 assert_set examples/simple/_out/nodea.yaml "hostname: nodea"
 assert_set examples/simple/_out/nodea.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodea.yaml "disk: /dev/sda"
-assert_set examples/simple/_out/nodea.yaml "allowSchedulingOnControlPlanes: true"
+assert_unset examples/simple/_out/nodea.yaml "taints:"
 assert_set examples/simple/_out/nodea.yaml "image: factory.talos.dev/metal-installer/abc123:v1.9.5"
 assert_unset examples/simple/_out/nodea.yaml "image: ghcr.io/siderolabs/installer:v1.9.5"
 
 echo "====> Validating nodeb (worker) got its hostname, cluster-wide, and inline patch, but not nodea's, and fell back to the cluster-wide installImage..."
 assert_set examples/simple/_out/nodeb.yaml "hostname: nodeb"
 assert_set examples/simple/_out/nodeb.yaml "net.core.somaxconn:"
-assert_set examples/simple/_out/nodeb.yaml "destination: /var/lib/longhorn"
+assert_set examples/simple/_out/nodeb.yaml "- time.cloudflare.com"
+assert_set examples/simple/_out/nodeb.yaml "disk: /dev/nvme0n1"
 assert_unset examples/simple/_out/nodeb.yaml "disk: /dev/sda"
 assert_set examples/simple/_out/nodeb.yaml "image: ghcr.io/siderolabs/installer:v1.9.5"
 
 echo "====> Validating a talosctl client config was generated too..."
 assert_set examples/simple/_out/talosconfig "context: home-cluster"
 assert_set examples/simple/_out/talosconfig "10.5.0.11"
+
+echo "====> Validating node configuration using talosctl..."
+talosctl validate -m metal -c examples/simple/_out/nodea.yaml
+talosctl validate -m metal -c examples/simple/_out/nodeb.yaml
 
 echo "========================================================================================="
 echo "Tests completed successfully!"
