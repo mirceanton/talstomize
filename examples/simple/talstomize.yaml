@@ -24,12 +24,12 @@ nodes:
     kind: worker
     patches:
       - machine:
-          kubelet:
-            extraMounts:
-              - destination: /var/lib/longhorn
-                type: bind
-                source: /var/lib/longhorn
-                options: ["bind", "rshared", "rw"]
+          install:
+            disk: "/dev/nvme0n1"
+      - machine:
+          time:
+            servers:
+              - time.cloudflare.com
 
 patches:
   - machine:
