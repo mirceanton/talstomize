@@ -29,6 +29,7 @@ type Engine struct {
 	input             *generate.Input
 	talosVersion      string
 	kubernetesVersion string
+	controlPlaneIPs   []string
 
 	// resolveSchematic posts a schematic customization to the Image
 	// Factory and returns its ID; defaults to factory.Schematic, swappable
@@ -56,17 +57,19 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		kubernetesVersion = constants.DefaultKubernetesVersion
 	}
 
-	var endpoints []string
+	var controlPlaneIPs []string
 
 	for _, node := range cfg.Nodes {
 		if node.Kind == tstomcfg.KindControlPlane {
-			endpoints = append(endpoints, node.IP)
+			controlPlaneIPs = append(controlPlaneIPs, node.IP)
 		}
 	}
 
+	sort.Strings(controlPlaneIPs)
+
 	opts := []generate.Option{
 		generate.WithSecretsBundle(bundle),
-		generate.WithEndpointList(endpoints),
+		generate.WithEndpointList(controlPlaneIPs),
 		generate.WithAdditionalSubjectAltNames(cfg.AdditionalSubjectAltNames),
 	}
 
@@ -94,6 +97,7 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		input:             input,
 		talosVersion:      talosVersion,
 		kubernetesVersion: kubernetesVersion,
+		controlPlaneIPs:   controlPlaneIPs,
 		resolveSchematic:  factory.Schematic,
 	}, nil
 }
@@ -105,6 +109,14 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 // config, not a second source of truth.
 func (e *Engine) KubernetesVersion() string {
 	return e.kubernetesVersion
+}
+
+// ControlPlaneIPs returns the sorted IPs of every controlplane node in the
+// cluster. Cluster-wide talosctl calls that have no single node of their
+// own to target (e.g. `upgrade-k8s`, which otherwise fails with "nodes are
+// not set for the command") use this as their `--nodes` entry point.
+func (e *Engine) ControlPlaneIPs() []string {
+	return e.controlPlaneIPs
 }
 
 // Talosconfig returns the talosctl client configuration for the cluster,
