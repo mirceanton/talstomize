@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/siderolabs/talos/pkg/machinery v1.14.0
+	github.com/siderolabs/talos/pkg/machinery v1.14.1
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -40,7 +40,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.9 // indirect
 	github.com/siderolabs/crypto v0.6.5 // indirect
-	github.com/siderolabs/gen v0.8.7 // indirect
+	github.com/siderolabs/gen v0.8.8 // indirect
 	github.com/siderolabs/go-pointer v1.0.1 // indirect
 	github.com/siderolabs/net v0.4.0 // indirect
 	github.com/siderolabs/protoenc v0.2.4 // indirect
