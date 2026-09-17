@@ -250,7 +250,12 @@ func diffLiveState(engine *talos.Engine, node config.Node, rendered tconfig.Prov
 func diffKubernetesVersion(engine *talos.Engine, errOut io.Writer, passthrough []string) (string, error) {
 	target := engine.KubernetesVersion()
 
-	plan, err := getK8sUpgradePlan(errOut, target, passthrough)
+	controlPlaneIPs := engine.ControlPlaneIPs()
+	if len(controlPlaneIPs) == 0 {
+		return "", fmt.Errorf("no controlplane nodes configured to query the cluster's Kubernetes version against")
+	}
+
+	plan, err := getK8sUpgradePlan(errOut, target, controlPlaneIPs[0], passthrough)
 	if err != nil {
 		return "", fmt.Errorf("fetching Kubernetes upgrade plan: %w", err)
 	}
