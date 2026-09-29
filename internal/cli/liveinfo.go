@@ -126,8 +126,8 @@ func getKernelCmdline(errOut io.Writer, ip string, passthrough []string) (string
 // returns its raw stdout - used only to detect/report whether the
 // cluster's current Kubernetes version differs from target, never to
 // execute anything.
-func getK8sUpgradePlan(errOut io.Writer, target string, passthrough []string) (string, error) {
-	args := append([]string{"upgrade-k8s", "--to", target, "--dry-run"}, passthrough...)
+func getK8sUpgradePlan(errOut io.Writer, target, node string, passthrough []string) (string, error) {
+	args := append([]string{"upgrade-k8s", "--nodes", node, "--to", target, "--dry-run"}, passthrough...)
 
 	return runTalosctlCaptured(errOut, args)
 }
