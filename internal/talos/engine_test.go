@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -416,6 +417,49 @@ workerPatches: []
 
 	if got, want := engine.KubernetesVersion(), constants.DefaultKubernetesVersion; got != want {
 		t.Errorf("KubernetesVersion() = %q, want default %q", got, want)
+	}
+}
+
+func TestEngineControlPlaneIPs(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodec:
+    ip: 10.5.0.13
+    kind: controlplane
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+  nodeb:
+    ip: 10.5.0.12
+    kind: worker
+controlplanePatches: []
+workerPatches: []
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	got := engine.ControlPlaneIPs()
+	want := []string{"10.5.0.11", "10.5.0.13"}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("ControlPlaneIPs() = %v, want %v (sorted, worker excluded)", got, want)
 	}
 }
 
