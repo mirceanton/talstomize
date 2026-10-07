@@ -74,6 +74,16 @@ type Config struct {
 	// Optional; defaults to "cluster.local".
 	DNSDomain string `yaml:"dnsDomain,omitempty"`
 
+	// ContractVersion is the Talos version whose config schema ("version
+	// contract") the rendered machine configs are generated against: the
+	// classic single-document shape up to 1.13, the multi-document shape
+	// from 1.14 on. Optional; defaults to Installer.TalosVersion (the
+	// version the node is installed with), and to the Talos version
+	// bundled with the machinery dependency when that's unset too. Set it
+	// to "current" to force that last behavior explicitly, e.g. to keep a
+	// multi-document config while installing a pre-1.14 Talos version.
+	ContractVersion string `yaml:"contractVersion,omitempty"`
+
 	// Installer configures the cluster-wide default install image,
 	// overridable per node via Node.Installer. Mirrors machine.install's
 	// own nesting instead of a flurry of flat top-level fields.
@@ -109,11 +119,14 @@ type Installer struct {
 	Schematic yaml.Node `yaml:"schematic,omitempty"`
 
 	// TalosVersion tags the installer image computed from Schematic (e.g.
-	// "v1.13.8"). Only consulted when Schematic is set; ignored
-	// otherwise. Optional; defaults to the Talos version bundled with
-	// talstomize's machinery dependency. Unrelated to talosctl gen
-	// config's --talos-version, which is an unrelated backwards-compat
-	// config-schema flag, not an installer image tag.
+	// "v1.13.8"). Only consulted for that image when Schematic is set, but
+	// always the default Config.ContractVersion: it names the Talos version
+	// the nodes are installed with, hence the config schema they can read.
+	// Optional; defaults to the Talos version bundled with talstomize's
+	// machinery dependency. Not talosctl gen config's --talos-version, which
+	// is a purely config-schema flag (Config.ContractVersion is its
+	// talstomize equivalent) - this one is an installer image tag that the
+	// contract merely follows by default.
 	TalosVersion string `yaml:"talosVersion,omitempty"`
 }
 
