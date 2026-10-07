@@ -70,6 +70,28 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		generate.WithAdditionalSubjectAltNames(cfg.AdditionalSubjectAltNames),
 	}
 
+	// The version contract picks the config schema the generated base uses:
+	// the classic, single-document v1alpha1 shape up to Talos 1.13, the
+	// multi-document shape (KubeletConfig, KubePrismConfig, ...) from 1.14
+	// on. It defaults to the version the node will actually run, so a
+	// classic-era node isn't handed documents it can't decode, while
+	// contractVersion overrides it for the cases where the schema has to be
+	// pinned independently of the installer - e.g. a 1.14 node that a repo
+	// of classic-field patches is written against.
+	field, version := "contractVersion", cfg.ContractVersion
+	if version == "" {
+		field, version = "installer.talosVersion", cfg.Installer.TalosVersion
+	}
+
+	contract, err := parseVersionContract(version)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", field, err)
+	}
+
+	if contract != nil {
+		opts = append(opts, generate.WithVersionContract(contract))
+	}
+
 	// WithDNSDomain unconditionally overwrites the "cluster.local" default,
 	// so it must only be added when actually set.
 	if cfg.DNSDomain != "" {
@@ -96,6 +118,28 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		kubernetesVersion: kubernetesVersion,
 		resolveSchematic:  factory.Schematic,
 	}, nil
+}
+
+// contractCurrent is the ContractVersion value that explicitly selects the
+// machinery's current version contract, rather than one derived from a
+// Talos version.
+const contractCurrent = "current"
+
+// parseVersionContract maps a configured Talos version to the machinery
+// version contract describing the config schema to generate. An empty
+// version, and the literal "current", both mean the machinery's current
+// contract - a nil contract, in machinery terms.
+func parseVersionContract(version string) (*tconfig.VersionContract, error) {
+	if version == "" || version == contractCurrent {
+		return tconfig.TalosVersionCurrent, nil
+	}
+
+	contract, err := tconfig.ParseContractFromVersion(version)
+	if err != nil {
+		return nil, fmt.Errorf("parsing talos version %q: %w", version, err)
+	}
+
+	return contract, nil
 }
 
 // KubernetesVersion returns the Kubernetes version every node's config is
