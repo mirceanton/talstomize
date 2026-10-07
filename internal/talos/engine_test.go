@@ -153,6 +153,173 @@ func hasSetLine(yaml, needle string) bool {
 	return false
 }
 
+// hasSetKey reports whether yaml has a line that is exactly key, ignoring
+// indentation and commented-out documentation lines - telling an actually
+// emitted mapping key from the same text appearing inside a value (e.g.
+// "kubelet:" also matches inside "ghcr.io/siderolabs/kubelet:v1.37.1").
+func hasSetKey(yaml, key string) bool {
+	for line := range strings.SplitSeq(yaml, "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == key || strings.HasPrefix(trimmed, key+" ") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestEngineRenderNodeVersionContract pins the shape of the generated base
+// config to the configured version contract: pre-1.14 versions get the
+// classic single-document v1alpha1 config (a machine.kubelet block and
+// friends), 1.14+ the multi-document one (a separate KubeletConfig document,
+// ...). It must not silently follow whichever contract the machinery
+// dependency happens to be built against - every patch written against the
+// classic fields (a whole repo of them, typically) only stays valid if the
+// base agrees with it.
+//
+// See machinery's VersionContract.MultidocKubernetesConfigSupported:
+// `contract.Greater(TalosVersion1_13)`, with a nil contract meaning
+// "current".
+func TestEngineRenderNodeVersionContract(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// fields are extra top-level talstomize.yaml fields.
+		fields string
+		// classic is true when the classic (single-document) contract is
+		// expected, false when the multi-document one is.
+		classic bool
+	}{
+		{
+			name:    "unset falls back to the machinery's current (multi-document) contract",
+			fields:  "",
+			classic: false,
+		},
+		{
+			name:    "installer.talosVersion is the default contract",
+			fields:  "installer:\n  image: ghcr.io/siderolabs/installer:v1.13.10\n  talosVersion: v1.13.10\n",
+			classic: true,
+		},
+		{
+			// The homelab case: a node already running 1.14, with every
+			// patch written against the classic fields.
+			name:    "contractVersion overrides installer.talosVersion",
+			fields:  "contractVersion: v1.13.10\ninstaller:\n  image: ghcr.io/siderolabs/installer:v1.14.2\n  talosVersion: v1.14.2\n",
+			classic: true,
+		},
+		{
+			name:    "contractVersion selects the multi-document contract",
+			fields:  "contractVersion: v1.14.2\n",
+			classic: false,
+		},
+		{
+			name:    "contractVersion current ignores installer.talosVersion",
+			fields:  "contractVersion: current\ninstaller:\n  talosVersion: v1.13.10\n",
+			classic: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			writeSecretsBundle(t, dir)
+
+			writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+`+tc.fields+`nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatalf("config.Load: %v", err)
+			}
+
+			engine, err := talos.NewEngine(cfg)
+			if err != nil {
+				t.Fatalf("NewEngine: %v", err)
+			}
+
+			nodeaYAML := mustString(t, mustRenderNode(t, engine, "nodea"))
+
+			// The multi-document contract moves what the classic one nests
+			// under machine.kubelet into its own KubeletConfig document.
+			if got, want := hasSetKey(nodeaYAML, "kind: KubeletConfig"), !tc.classic; got != want {
+				t.Errorf("KubeletConfig document emitted = %v, want %v", got, want)
+			}
+
+			if got, want := hasSetKey(nodeaYAML, "kubelet:"), tc.classic; got != want {
+				t.Errorf("machine.kubelet block emitted = %v, want %v", got, want)
+			}
+
+			if got, want := strings.Contains(nodeaYAML, "\n---\n"), !tc.classic; got != want {
+				t.Errorf("multi-document separator emitted = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestEngineNewEngineInvalidVersionContract(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// fields are extra top-level talstomize.yaml fields.
+		fields string
+		want   string
+	}{
+		{
+			name:   "contractVersion",
+			fields: "contractVersion: not-a-version\n",
+			want:   "contractVersion",
+		},
+		{
+			name:   "installer.talosVersion",
+			fields: "installer:\n  talosVersion: not-a-version\n",
+			want:   "installer.talosVersion",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			writeSecretsBundle(t, dir)
+
+			writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+`+tc.fields+`nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+controlplanePatches: []
+workerPatches: []
+`)
+
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatalf("config.Load: %v", err)
+			}
+
+			_, err = talos.NewEngine(cfg)
+			if err == nil {
+				t.Fatal("NewEngine: expected an error for an unparseable Talos version, got nil")
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("NewEngine error = %q, want it to name %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEngineRenderNodeAdditionalSubjectAltNames(t *testing.T) {
 	dir := t.TempDir()
 
