@@ -15,6 +15,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/generate"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
 	"github.com/siderolabs/talos/pkg/machinery/config/machine"
+	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	tversion "github.com/siderolabs/talos/pkg/machinery/version"
 
@@ -254,9 +255,9 @@ func (e *Engine) resolveSchematicImage(schematic yaml.Node) (string, error) {
 }
 
 // RenderNode builds the final, patched machine config for a single node, in
-// order: implicit hostname patch → implicit per-node install image patch
-// (if set) → cluster-wide patches → role patches → node's own patches,
-// each overriding the ones before it.
+// order: implicit hostname patch → implicit install image patch (if set) →
+// cluster-wide patches → role patches → node's own patches, each overriding
+// the ones before it.
 func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 	node, ok := e.cfg.Nodes[name]
 	if !ok {
@@ -284,56 +285,134 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 		return nil, fmt.Errorf("node %q: building hostname patch: %w", name, err)
 	}
 
-	patches := []configpatcher.Patch{hostnamePatch}
+	userPatches, err := e.userPatches(node)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: %w", name, err)
+	}
+
+	rendered, err := applyPatches(base, append([]configpatcher.Patch{hostnamePatch}, userPatches...))
+	if err != nil {
+		return nil, fmt.Errorf("node %q: applying patches: %w", name, err)
+	}
 
 	installImage, err := e.effectiveInstallImage(node)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: resolving install image: %w", name, err)
 	}
 
-	if installImage != "" {
-		installImagePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil,
-			"machine:\n  install:\n    image: %s\n", installImage,
-		))
-		if err != nil {
-			return nil, fmt.Errorf("node %q: building install image patch: %w", name, err)
-		}
-
-		patches = append(patches, installImagePatch)
+	if installImage == "" {
+		return rendered, nil
 	}
 
-	resolved, err := ResolvePatches(e.cfg.Dir(), e.cfg.Patches)
+	// Where the install image patch goes depends on what the user's patches did,
+	// so it's only known after a first render. It's then re-rendered with the image
+	// patch placed *before* the user's patches rather than merged on afterwards:
+	// merging any UnattendedInstallConfig patch without a diskSelector onto one that
+	// has it wipes it (cel.Expression.Merge copies the right side unconditionally).
+	imagePatchFormat, ok := installImagePatch(rendered)
+	if !ok {
+		return rendered, nil
+	}
+
+	imagePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil, imagePatchFormat, installImage))
 	if err != nil {
-		return nil, fmt.Errorf("node %q: cluster patches: %w", name, err)
+		return nil, fmt.Errorf("node %q: building install image patch: %w", name, err)
 	}
 
-	patches = append(patches, resolved...)
+	rendered, err = applyPatches(base, append([]configpatcher.Patch{hostnamePatch, imagePatch}, userPatches...))
+	if err != nil {
+		return nil, fmt.Errorf("node %q: applying patches: %w", name, err)
+	}
 
+	return rendered, nil
+}
+
+// userPatches resolves node's patches from the talstomize config, in order:
+// cluster-wide, role, then the node's own.
+func (e *Engine) userPatches(node tstomcfg.Node) ([]configpatcher.Patch, error) {
 	rolePatches := e.cfg.WorkerPatches
 	if node.Kind == tstomcfg.KindControlPlane {
 		rolePatches = e.cfg.ControlPlanePatches
 	}
 
-	resolved, err = ResolvePatches(e.cfg.Dir(), rolePatches)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: role patches: %w", name, err)
+	var patches []configpatcher.Patch
+
+	for _, group := range []struct {
+		desc string
+		refs []yaml.Node
+	}{
+		{"cluster patches", e.cfg.Patches},
+		{"role patches", rolePatches},
+		{"node patches", node.Patches},
+	} {
+		resolved, err := ResolvePatches(e.cfg.Dir(), group.refs)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", group.desc, err)
+		}
+
+		patches = append(patches, resolved...)
 	}
 
-	patches = append(patches, resolved...)
+	return patches, nil
+}
 
-	resolved, err = ResolvePatches(e.cfg.Dir(), node.Patches)
-	if err != nil {
-		return nil, fmt.Errorf("node %q: node patches: %w", name, err)
-	}
-
-	patches = append(patches, resolved...)
-
+func applyPatches(base tconfig.Provider, patches []configpatcher.Patch) (tconfig.Provider, error) {
 	out, err := configpatcher.Apply(configpatcher.WithConfig(base), patches)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: applying patches: %w", name, err)
+		return nil, err
 	}
 
 	return out.Config()
+}
+
+// installImagePatch returns the patch format string (with a single %s for
+// the image) that sets the install image wherever rendered declares the rest
+// of its install config - an UnattendedInstallConfig document, or the legacy
+// v1alpha1 machine.install block - since Talos rejects a config that uses
+// both. With neither present, it defaults to an UnattendedInstallConfig
+// document, the Talos 1.14+ way. ok is false when a patch already set an
+// install image explicitly, which always wins.
+func installImagePatch(rendered tconfig.Provider) (format string, ok bool) {
+	const (
+		unattended = "apiVersion: v1alpha1\nkind: UnattendedInstallConfig\ninstaller:\n  image: %s\n"
+		legacy     = "machine:\n  install:\n    image: %s\n"
+	)
+
+	if InstallImage(rendered) != "" {
+		return "", false
+	}
+
+	if rendered.UnattendedInstallConfig() == nil && legacyInstall(rendered) != nil {
+		return legacy, true
+	}
+
+	return unattended, true
+}
+
+// legacyInstall returns cfg's deprecated v1alpha1 machine.install block, or
+// nil if it isn't set.
+func legacyInstall(cfg tconfig.Provider) *v1alpha1.InstallConfig { //nolint:staticcheck // detecting legacy configuration
+	raw := cfg.RawV1Alpha1()
+	if raw == nil || raw.MachineConfig == nil {
+		return nil
+	}
+
+	return raw.MachineConfig.MachineInstall //nolint:staticcheck // detecting legacy configuration
+}
+
+// InstallImage returns the install image cfg declares, from its
+// UnattendedInstallConfig document if present, else the legacy v1alpha1
+// machine.install block - "" if neither sets one.
+func InstallImage(cfg tconfig.Provider) string {
+	if unattended := cfg.UnattendedInstallConfig(); unattended != nil {
+		return unattended.InstallerImage()
+	}
+
+	if legacy := legacyInstall(cfg); legacy != nil {
+		return legacy.InstallImage
+	}
+
+	return ""
 }
 
 // NodeNames returns the sorted list of node names in the config.
