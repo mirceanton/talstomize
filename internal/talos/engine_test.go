@@ -258,10 +258,6 @@ workerPatches: []
 			if got, want := hasSetKey(nodeaYAML, "kubelet:"), tc.classic; got != want {
 				t.Errorf("machine.kubelet block emitted = %v, want %v", got, want)
 			}
-
-			if got, want := strings.Contains(nodeaYAML, "\n---\n"), !tc.classic; got != want {
-				t.Errorf("multi-document separator emitted = %v, want %v", got, want)
-			}
 		})
 	}
 }
@@ -418,6 +414,46 @@ workerPatches: []
 
 	if !hasSetLine(nodebYAML, "image: ghcr.io/siderolabs/installer:v1.9.5") {
 		t.Errorf("nodeb config should fall back to the cluster-wide installer.image, got:\n%s", nodebYAML)
+	}
+}
+
+// The static hostname must use the HostnameConfig document, not the
+// deprecated machine.network.hostname field.
+func TestEngineRenderNodeHostnameConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	rendered := mustRenderNode(t, engine, "nodea")
+
+	if network := rendered.RawV1Alpha1().MachineConfig.MachineNetwork; network != nil && network.NetworkHostname != "" { //nolint:staticcheck
+		t.Errorf("legacy machine.network.hostname should be unset, got %q", network.NetworkHostname) //nolint:staticcheck
+	}
+
+	if got := rendered.NetworkHostnameConfig().Hostname(); got != "nodea" {
+		t.Errorf("HostnameConfig hostname = %q, want %q", got, "nodea")
 	}
 }
 

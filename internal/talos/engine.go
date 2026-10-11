@@ -273,11 +273,11 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 		return nil, fmt.Errorf("generating base config for node %q: %w", name, err)
 	}
 
-	// The base config carries a default `HostnameConfig{auto: stable}` document, which
-	// conflicts with setting the legacy machine.network.hostname field below (Talos
-	// rejects a config that sets both). Delete it so the static hostname wins.
+	// The base config carries a default `HostnameConfig{auto: stable}` document; switch
+	// it to a static hostname (Talos rejects `auto` and `hostname` being set together)
+	// rather than using the deprecated machine.network.hostname field.
 	hostnamePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil,
-		"machine:\n  network:\n    hostname: %s\n---\napiVersion: v1alpha1\nkind: HostnameConfig\n$patch: delete\n",
+		"apiVersion: v1alpha1\nkind: HostnameConfig\nauto: \"off\"\nhostname: %s\n",
 		name,
 	))
 	if err != nil {
