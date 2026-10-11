@@ -289,3 +289,26 @@ nodes:
 		t.Fatal("Load: expected an error for a malformed .env file, got nil")
 	}
 }
+
+// Unknown fields - e.g. a typo - must fail loudly instead of being silently
+// ignored.
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+kubernetesVerison: v1.37.1
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	if _, err := Load(dir); err == nil {
+		t.Fatal("Load: expected an error for an unknown field, got nil")
+	}
+}
