@@ -182,7 +182,7 @@ func getRunningConfig(ip string, passthrough []string, stderr io.Writer) (tconfi
 func diffLiveState(engine *talos.Engine, node config.Node, rendered tconfig.Provider, errOut io.Writer, name string, passthrough []string) ([]string, error) {
 	var lines []string
 
-	if target := rendered.Machine().Install().Image(); target != "" {
+	if target := talos.InstallImage(rendered); target != "" {
 		running, err := getRunningTalosVersion(errOut, node.IP, passthrough)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: fetching running Talos version: %w", name, err)

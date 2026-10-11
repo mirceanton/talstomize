@@ -417,6 +417,108 @@ workerPatches: []
 	}
 }
 
+// Talos rejects a config that sets both an UnattendedInstallConfig document
+// and the legacy machine.install block, so the install image must land in
+// whichever one the patches already use - and never override an image a
+// patch set explicitly.
+func TestEngineRenderNodeInstallImagePlacement(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+installer:
+  image: ghcr.io/siderolabs/installer:v1.14.2
+nodes:
+  unattended:
+    ip: 10.5.0.11
+    kind: controlplane
+    patches:
+      - apiVersion: v1alpha1
+        kind: UnattendedInstallConfig
+        provisioning:
+          diskSelector:
+            match: disk.dev_path == "/dev/sda"
+  legacy:
+    ip: 10.5.0.12
+    kind: worker
+    patches:
+      - machine:
+          install:
+            disk: /dev/sda
+  bare:
+    ip: 10.5.0.13
+    kind: worker
+  explicit:
+    ip: 10.5.0.14
+    kind: worker
+    patches:
+      - apiVersion: v1alpha1
+        kind: UnattendedInstallConfig
+        installer:
+          image: ghcr.io/example/installer:custom
+        provisioning:
+          diskSelector:
+            match: disk.dev_path == "/dev/sda"
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	clusterImage := "ghcr.io/siderolabs/installer:v1.14.2"
+
+	for _, tc := range []struct {
+		node       string
+		wantImage  string
+		wantLegacy bool
+	}{
+		{node: "unattended", wantImage: clusterImage},
+		{node: "legacy", wantImage: clusterImage, wantLegacy: true},
+		{node: "bare", wantImage: clusterImage},
+		{node: "explicit", wantImage: "ghcr.io/example/installer:custom"},
+	} {
+		t.Run(tc.node, func(t *testing.T) {
+			rendered := mustRenderNode(t, engine, tc.node)
+
+			if got := talos.InstallImage(rendered); got != tc.wantImage {
+				t.Errorf("InstallImage() = %q, want %q", got, tc.wantImage)
+			}
+
+			hasUnattended := rendered.UnattendedInstallConfig() != nil
+			hasLegacy := rendered.RawV1Alpha1().MachineConfig.MachineInstall != nil //nolint:staticcheck
+
+			if hasUnattended == hasLegacy {
+				t.Fatalf("want exactly one of UnattendedInstallConfig / machine.install, got unattended=%v legacy=%v:\n%s",
+					hasUnattended, hasLegacy, mustString(t, rendered))
+			}
+
+			if hasLegacy != tc.wantLegacy {
+				t.Errorf("legacy machine.install set = %v, want %v", hasLegacy, tc.wantLegacy)
+			}
+
+			// Setting the image must not clobber the install disk the patches declared.
+			if tc.node != "bare" {
+				renderedYAML := mustString(t, rendered)
+				if !hasSetLine(renderedYAML, `match: disk.dev_path == "/dev/sda"`) && !hasSetLine(renderedYAML, "disk: /dev/sda") {
+					t.Errorf("install disk lost while setting the install image:\n%s", renderedYAML)
+				}
+			}
+		})
+	}
+}
+
 // The static hostname must use the HostnameConfig document, not the
 // deprecated machine.network.hostname field.
 func TestEngineRenderNodeHostnameConfig(t *testing.T) {
