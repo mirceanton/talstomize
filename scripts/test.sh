@@ -35,21 +35,26 @@ assert_unset() {
   fi
 }
 
-echo "====> Validating nodea (controlplane) got its hostname, cluster-wide, per-node, and role patches, plus its own installImage override..."
+# Image Factory schematic IDs are content hashes of the customization
+# document, so they're stable for a given example schematic.
+SCHEMATIC_CLUSTER=c9078f9419961640c712a8bf2bb9174933dfcf1da383fd8ea2b7dc21493f8bac # iscsi-tools
+SCHEMATIC_NODEA=98c912e25a452279d00bd5f060b0b3f6677ee1546f391928bab5ed1e5bd90bd7   # iscsi-tools + zfs
+
+echo "====> Validating nodea (controlplane) got its hostname, cluster-wide, per-node, and role patches, plus its own installer override..."
 assert_set examples/simple/_out/nodea.yaml "hostname: nodea"
 assert_set examples/simple/_out/nodea.yaml "net.core.somaxconn:"
-assert_set examples/simple/_out/nodea.yaml "disk: /dev/sda"
+assert_set examples/simple/_out/nodea.yaml 'match: disk.dev_path == "/dev/sda"'
 assert_unset examples/simple/_out/nodea.yaml "taints:"
-assert_set examples/simple/_out/nodea.yaml "image: factory.talos.dev/metal-installer/abc123:v1.9.5"
-assert_unset examples/simple/_out/nodea.yaml "image: ghcr.io/siderolabs/installer:v1.9.5"
+assert_set examples/simple/_out/nodea.yaml "image: factory.talos.dev/metal-installer/${SCHEMATIC_NODEA}:v1.14.2"
+assert_unset examples/simple/_out/nodea.yaml "image: factory.talos.dev/metal-installer/${SCHEMATIC_CLUSTER}:v1.14.2"
 
-echo "====> Validating nodeb (worker) got its hostname, cluster-wide, and inline patch, but not nodea's, and fell back to the cluster-wide installImage..."
+echo "====> Validating nodeb (worker) got its hostname, cluster-wide, and inline patches, but not nodea's, and fell back to the cluster-wide installer..."
 assert_set examples/simple/_out/nodeb.yaml "hostname: nodeb"
 assert_set examples/simple/_out/nodeb.yaml "net.core.somaxconn:"
 assert_set examples/simple/_out/nodeb.yaml "- time.cloudflare.com"
-assert_set examples/simple/_out/nodeb.yaml "disk: /dev/nvme0n1"
-assert_unset examples/simple/_out/nodeb.yaml "disk: /dev/sda"
-assert_set examples/simple/_out/nodeb.yaml "image: ghcr.io/siderolabs/installer:v1.9.5"
+assert_set examples/simple/_out/nodeb.yaml 'match: disk.dev_path == "/dev/nvme0n1"'
+assert_unset examples/simple/_out/nodeb.yaml 'match: disk.dev_path == "/dev/sda"'
+assert_set examples/simple/_out/nodeb.yaml "image: factory.talos.dev/metal-installer/${SCHEMATIC_CLUSTER}:v1.14.2"
 
 echo "====> Validating a talosctl client config was generated too..."
 assert_set examples/simple/_out/talosconfig "context: home-cluster"

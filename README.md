@@ -53,6 +53,8 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
    clusterName: my-cluster
    controlPlaneEndpoint: https://10.5.0.2:6443
    secrets: ./talos-secrets.yaml
+   talosVersion: v1.14.2       # every node runs this; selects the generated config style
+   kubernetesVersion: v1.37.1
 
    nodes:
      nodea:
@@ -64,19 +66,18 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
        ip: 10.5.0.12
        kind: worker
        patches:
-         - machine:
-             kubelet:
-               extraMounts:
-                 - destination: /var/lib/longhorn
-                   type: bind
-                   source: /var/lib/longhorn
-                   options: ["bind", "rshared", "rw"]
+         - apiVersion: v1alpha1
+           kind: UnattendedInstallConfig
+           provisioning:
+             diskSelector:
+               match: disk.dev_path == "/dev/nvme0n1"
 
    # Applied to every node, regardless of role.
    patches:
-     - machine:
-         sysctls:
-           net.core.somaxconn: "1024"
+     - apiVersion: v1alpha1
+       kind: SysctlConfig
+       params:
+         net.core.somaxconn: "1024"
 
    # Applied to every controlplane / worker node, before that node's own patches.
    controlplanePatches:
@@ -139,7 +140,7 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
 > that and live cluster state: the running machine config (`talosctl get machineconfig`,
 > encoded without comments so the diff isn't swamped by Talos's own per-field
 > documentation), the node's actual booted Talos OS version (`talosctl get version` -
-> deliberately *not* the machine config's own `install.image` field, which only reflects
+> deliberately *not* the machine config's own install image field, which only reflects
 > last-declared intent and can already agree with the rendered config even when the node
 > was never actually rebooted), and - if `installer.schematic` is set - its installed
 > system extensions and kernel args (`talosctl get extensions`/`get cmdline`), plus the
@@ -157,24 +158,36 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `controlPlaneEndpoint`         | The cluster's control plane endpoint (e.g. a VIP or load balancer URL).                         |
 | `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency. A leading `v` (e.g. `v1.31.1`) is accepted and stripped. |
 | `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`. May be sops-encrypted.              |
+| `talosVersion`                 | Optional; the Talos version every node runs (e.g. `v1.14.2`, leading `v` optional). Selects the machine config style the base config is generated in (`talosctl gen config`'s `--talos-version`) unless `contractVersion` overrides it, and tags every node's installer image. Defaults to the Talos version bundled with talstomize's machinery dependency; a newer one is rejected. Your patches are passed through as-is - they're never converted to match. |
 | `additionalSubjectAltNames`    | Optional; extra SANs added to both the machine and kube-apiserver certificates on every node (`talosctl gen config`'s `--additional-sans`). |
 | `dnsDomain`                    | Optional; the cluster's DNS domain (`talosctl gen config`'s `--dns-domain`). Defaults to `cluster.local`. |
-| `contractVersion`              | Optional; the Talos version whose config *schema* ("version contract") the rendered configs follow: the classic single-document shape up to `1.13`, the multi-document shape from `1.14` on. Defaults to `installer.talosVersion`, then to the version bundled with talstomize's machinery dependency; the literal `current` selects that last one explicitly. |
-| `installer.image`              | Optional; the cluster-wide default installer image (`talosctl gen config`'s `--install-image`). Overridable per node. Unlike bare `talosctl`, no smart default is computed - leave `installer` unset and `machine.install.image` is left for patches to set. Mutually exclusive with `installer.schematic`. |
-| `installer.schematic`          | Optional; a [Image Factory](https://factory.talos.dev) schematic customization document (`extraKernelArgs`, `systemExtensions`, ...), resolved to a schematic ID and combined with `installer.talosVersion` into the cluster-wide default installer image. Overridable (fully replaced, not merged) per node. Mutually exclusive with `installer.image`. Only the `metal` platform is supported for now. |
-| `installer.talosVersion`       | Optional; tags the `installer.schematic`-computed installer image (e.g. `v1.13.8`) - only consulted when `installer.schematic` is set. Also the default `contractVersion`. Defaults to the Talos version bundled with talstomize's machinery dependency. **Not** the same thing as `talosctl gen config`'s `--talos-version`, which picks the config *schema* - `contractVersion` is that flag's talstomize equivalent. |
+| `contractVersion`              | Optional; pins the Talos version whose config *schema* ("version contract") the rendered configs follow, independently of `talosVersion`: the classic single-document shape up to `1.13`, the multi-document shape from `1.14` on. Defaults to `talosVersion`; the literal `current` selects the version bundled with talstomize's machinery dependency. See [Version contract](#version-contract). |
+| `installer.schematic`          | Optional; an [Image Factory](https://factory.talos.dev) schematic customization document (`extraKernelArgs`, `systemExtensions`, ...), resolved to a schematic ID and tagged with `talosVersion` into the cluster-wide installer image. Leave it unset for the vanilla (no customization) installer. Only the `metal` platform is supported for now. See [Image Factory schematics](#image-factory-schematics). |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
-| `nodes.<name>.installer.image` | Optional; overrides `installer.image` for this node only. Mutually exclusive with `nodes.<name>.installer.schematic`. No `nodes.<name>.installer.talosVersion` - that's cluster-wide only. |
-| `nodes.<name>.installer.schematic` | Optional; overrides `installer.schematic` for this node only (a full replacement, not merged). Mutually exclusive with `nodes.<name>.installer.image`. |
+| `nodes.<name>.installer`       | Optional; overrides `installer` for this node only (a full replacement, not merged). Still tagged with the cluster-wide `talosVersion`. |
 | `nodes.<name>.patches`         | Patches applied to this node only, after the cluster-wide and role-wide patches.                |
 | `patches`                      | Patches applied to every node, regardless of role - the equivalent of `talosctl gen config`'s unprefixed `--config-patch`. |
 | `controlplanePatches`          | Patches applied to every `controlplane` node.                                                   |
 | `workerPatches`                | Patches applied to every `worker` node.                                                         |
 
-Patches are applied in order: implicit hostname patch → `patches` (cluster-wide) → role patches (`controlplanePatches`/`workerPatches`) → node patches, each overriding the ones before it.
+Unknown fields are rejected, so a typo (or a field from an older talstomize.yaml format) fails loudly instead of being silently ignored.
 
-`contractVersion` only picks the *schema* of the rendered config - it never installs or upgrades anything (that's `installer.talosVersion`, and `apply`/`diff` never run `talosctl upgrade`). Talos 1.14 moved what used to be nested fields (`machine.kubelet`, `machine.features.kubePrism`, `cluster.apiServer`, ...) into standalone documents (`KubeletConfig`, `KubePrismConfig`, `KubeAPIServerConfig`, ...), and the machinery emits one shape or the other according to the version contract. Pin it to a pre-1.14 version when your patches are written against the classic fields: a classic config is *still accepted by a 1.14 or newer node*, so an up-to-date node in a repo full of classic-field patches doesn't need those patches restated in document form. With neither `contractVersion` nor `installer.talosVersion` set, the machinery's current contract is used, as before.
+Patches are applied in order: implicit hostname patch (the node's name - a `HostnameConfig` document from Talos 1.12, `machine.network.hostname` before that) → implicit install image patch → `patches` (cluster-wide) → role patches (`controlplanePatches`/`workerPatches`) → node patches, each overriding the ones before it.
+
+### Install image placement
+
+Talos 1.14 moved install settings from the legacy v1alpha1 `machine.install` block into the `UnattendedInstallConfig` document, and rejects a config that uses both. So the installer image goes wherever your patches declared the rest of the install config:
+
+- if a patch defines an `UnattendedInstallConfig` (e.g. with a `provisioning.diskSelector`), the image is set as its `installer.image`;
+- otherwise, if a patch sets the legacy `machine.install` block (e.g. `machine.install.disk`), the image is set as `machine.install.image`;
+- with neither, it follows the version contract (`talosVersion`, unless `contractVersion` is set): an `UnattendedInstallConfig` from Talos 1.14, `machine.install` before that.
+
+An image a patch sets explicitly in either place always wins - that's how to use an installer image that doesn't come from the Image Factory.
+
+### Version contract
+
+`contractVersion` only picks the *schema* of the rendered config - it never installs or upgrades anything (that's `talosVersion`, and `apply`/`diff` never run `talosctl upgrade`). Talos 1.14 moved what used to be nested fields (`machine.kubelet`, `machine.features.kubePrism`, `cluster.apiServer`, ...) into standalone documents (`KubeletConfig`, `KubePrismConfig`, `KubeAPIServerConfig`, ...), and the machinery emits one shape or the other according to the version contract. Pin it to a pre-1.14 version when your patches are written against the classic fields: a classic config is *still accepted by a 1.14 or newer node*, so an up-to-date node in a repo full of classic-field patches doesn't need those patches restated in document form.
 
 Each patch entry is either:
 
@@ -239,12 +252,12 @@ sops resolves decryption keys the same way it always does (`SOPS_AGE_KEY_FILE`, 
 ## Image Factory schematics
 
 For a node that needs Talos system extensions (drivers, `zfs`, `nvidia`, ...) or extra kernel args, `installer.schematic` posts a customization
-document to the [Image Factory](https://factory.talos.dev) and turns the resulting schematic ID into the node's installer image. It lives under `installer` alongside `installer.image`, mirroring how `machine.install` itself nests image config in the underlying Talos schema, rather than as flat top-level fields:
+document to the [Image Factory](https://factory.talos.dev) and turns the resulting schematic ID, tagged with the cluster-wide `talosVersion`, into the node's installer image:
 
 ```yaml
 # talstomize.yaml
+talosVersion: v1.13.8
 installer:
-  talosVersion: v1.13.8
   schematic:
     customization:
       extraKernelArgs:
@@ -255,7 +268,7 @@ installer:
           - siderolabs/iscsi-tools
 ```
 
-This resolves (once per unique customization, memoized - a schematic shared by several nodes only hits the Factory once) to `machine.install.image: factory.talos.dev/metal-installer/<schematic id>:v1.13.8`, applied the same way an explicit `installer.image` would be. `nodes.<name>.installer.schematic` overrides it per node, for hardware that needs its own extensions (e.g. one node with a GPU).
+This resolves (once per unique customization, memoized - a schematic shared by several nodes only hits the Factory once) to the installer image `factory.talos.dev/metal-installer/<schematic id>:v1.13.8`. `nodes.<name>.installer` overrides it per node, for hardware that needs its own extensions (e.g. one node with a GPU). With no schematic set, nodes get the vanilla installer (`factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:<talosVersion>`, the same default `talosctl gen config` uses).
 
 >[!NOTE]
-> Unlike everything else talstomize does, resolving a schematic needs network access to `factory.talos.dev` - `build`/`apply` will fail if it's unreachable. Leaving `installer` unset entirely avoids this.
+> Unlike everything else talstomize does, resolving a schematic needs network access to `factory.talos.dev` - `build`/`apply` will fail if it's unreachable. The vanilla installer's schematic ID is fixed, so leaving `installer` unset entirely avoids this.
