@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"gopkg.in/yaml.v3"
 
 	"github.com/mirceanton/talstomize/internal/envsubst"
@@ -33,27 +34,9 @@ type Node struct {
 	Kind    string      `yaml:"kind"`
 	Patches []yaml.Node `yaml:"patches,omitempty"`
 
-	// Installer overrides Config.Installer for this node only.
-	Installer NodeInstaller `yaml:"installer,omitempty"`
-}
-
-// NodeInstaller overrides Installer for a single node (not merged - a full
-// replacement). No TalosVersion: that's cluster-wide only.
-type NodeInstaller struct {
-	// Image is a literal install image reference. Mutually exclusive with
-	// Schematic.
-	Image string `yaml:"image,omitempty"`
-
-	// Schematic overrides Installer.Schematic for this node. Mutually
-	// exclusive with Image. A zero Kind (SchematicSet returns false) means
-	// unset - decoding into *yaml.Node instead of yaml.Node silently loses
-	// the node's content, so this must stay a value, not a pointer.
-	Schematic yaml.Node `yaml:"schematic,omitempty"`
-}
-
-// SchematicSet reports whether i has a schematic set.
-func (i NodeInstaller) SchematicSet() bool {
-	return i.Schematic.Kind != 0
+	// Installer overrides Config.Installer for this node only - a full
+	// replacement, not merged.
+	Installer Installer `yaml:"installer,omitempty"`
 }
 
 // Config is the parsed content of a talstomize.yaml file.
@@ -65,6 +48,13 @@ type Config struct {
 	ControlPlaneEndpoint string `yaml:"controlPlaneEndpoint"`
 	KubernetesVersion    string `yaml:"kubernetesVersion,omitempty"`
 	Secrets              string `yaml:"secrets"`
+
+	// TalosVersion is the Talos version every node runs (e.g. "v1.14.2").
+	// It selects the machine config style generated for the base config
+	// (talosctl gen config's --talos-version contract) and tags every node's
+	// installer image. Optional; defaults to the Talos version bundled with
+	// talstomize's machinery dependency.
+	TalosVersion string `yaml:"talosVersion,omitempty"`
 
 	// AdditionalSubjectAltNames are added to both the machine and the
 	// kube-apiserver certificates, on every node - the equivalent of
@@ -78,16 +68,14 @@ type Config struct {
 	// ContractVersion is the Talos version whose config schema ("version
 	// contract") the rendered machine configs are generated against: the
 	// classic single-document shape up to 1.13, the multi-document shape
-	// from 1.14 on. Optional; defaults to Installer.TalosVersion (the
-	// version the node is installed with), and to the Talos version
-	// bundled with the machinery dependency when that's unset too. Set it
-	// to "current" to force that last behavior explicitly, e.g. to keep a
-	// multi-document config while installing a pre-1.14 Talos version.
+	// from 1.14 on. Optional; defaults to TalosVersion. Set it to pin the
+	// schema independently of the version the nodes run, e.g. to keep a
+	// repo of classic-field patches valid on a 1.14 node, or to "current"
+	// for the contract of the Talos version bundled with talstomize.
 	ContractVersion string `yaml:"contractVersion,omitempty"`
 
-	// Installer configures the cluster-wide default install image,
-	// overridable per node via Node.Installer. Mirrors machine.install's
-	// own nesting instead of a flurry of flat top-level fields.
+	// Installer configures the cluster-wide default installer image,
+	// overridable per node via Node.Installer.
 	Installer Installer `yaml:"installer,omitempty"`
 
 	Nodes map[string]Node `yaml:"nodes"`
@@ -104,31 +92,17 @@ type Config struct {
 	dir string
 }
 
-// Installer configures how a node's machine.install.image is determined:
-// either a literal Image reference, or an Image Factory
+// Installer configures a node's installer image: an Image Factory
 // (factory.talos.dev) Schematic customization document (extraKernelArgs,
-// systemExtensions, ...) resolved to a schematic ID and combined with
-// TalosVersion. Image and Schematic are mutually exclusive. Only the
-// "metal" platform is supported for now.
+// systemExtensions, ...), resolved to a schematic ID and tagged with
+// Config.TalosVersion. Leaving Schematic unset uses the vanilla (no
+// customization) schematic. Only the "metal" platform is supported for now.
 type Installer struct {
-	// Image is the equivalent of talosctl gen config's --install-image.
-	// Optional; unlike bare talosctl, talstomize computes no smart
-	// default - leave both Image and Schematic unset and
-	// machine.install.image is left for patches to set, same as today.
-	Image string `yaml:"image,omitempty"`
-
+	// Schematic is the customization document. A zero Kind (SchematicSet
+	// returns false) means unset - decoding into *yaml.Node instead of
+	// yaml.Node silently loses the node's content, so this must stay a
+	// value, not a pointer.
 	Schematic yaml.Node `yaml:"schematic,omitempty"`
-
-	// TalosVersion tags the installer image computed from Schematic (e.g.
-	// "v1.13.8"). Only consulted for that image when Schematic is set, but
-	// always the default Config.ContractVersion: it names the Talos version
-	// the nodes are installed with, hence the config schema they can read.
-	// Optional; defaults to the Talos version bundled with talstomize's
-	// machinery dependency. Not talosctl gen config's --talos-version, which
-	// is a purely config-schema flag (Config.ContractVersion is its
-	// talstomize equivalent) - this one is an installer image tag that the
-	// contract merely follows by default.
-	TalosVersion string `yaml:"talosVersion,omitempty"`
 }
 
 // SchematicSet reports whether i has a schematic set.
@@ -257,8 +231,10 @@ func (c *Config) validate() error {
 		errs = append(errs, "at least one node is required")
 	}
 
-	if c.Installer.Image != "" && c.Installer.SchematicSet() {
-		errs = append(errs, "installer.image and installer.schematic cannot both be set")
+	if c.TalosVersion != "" {
+		if _, err := tconfig.ParseContractFromVersion(c.TalosVersion); err != nil {
+			errs = append(errs, fmt.Sprintf("talosVersion: %v", err))
+		}
 	}
 
 	for name, node := range c.Nodes {
@@ -270,10 +246,6 @@ func (c *Config) validate() error {
 		case KindControlPlane, KindWorker:
 		default:
 			errs = append(errs, fmt.Sprintf("node %q: kind must be %q or %q, got %q", name, KindControlPlane, KindWorker, node.Kind))
-		}
-
-		if node.Installer.Image != "" && node.Installer.SchematicSet() {
-			errs = append(errs, fmt.Sprintf("node %q: installer.image and installer.schematic cannot both be set", name))
 		}
 	}
 

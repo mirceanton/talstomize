@@ -29,6 +29,7 @@ type Engine struct {
 	cfg               *tstomcfg.Config
 	input             *generate.Input
 	talosVersion      string
+	contract          *tconfig.VersionContract
 	kubernetesVersion string
 
 	// resolveSchematic posts a schematic customization to the Image
@@ -57,6 +58,40 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		kubernetesVersion = constants.DefaultKubernetesVersion
 	}
 
+	// Normalized to always carry a leading "v": it tags the installer image.
+	talosVersion := "v" + strings.TrimPrefix(cfg.TalosVersion, "v")
+	if cfg.TalosVersion == "" {
+		talosVersion = tversion.Tag
+	}
+
+	// The version contract picks the config schema the generated base uses:
+	// the classic, single-document v1alpha1 shape up to Talos 1.13, the
+	// multi-document shape (KubeletConfig, KubePrismConfig, ...) from 1.14
+	// on. It defaults to talosVersion, the version the nodes actually run,
+	// so a classic-era node isn't handed documents it can't decode, while
+	// contractVersion overrides it for the cases where the schema has to be
+	// pinned independently - e.g. a 1.14 node that a repo of classic-field
+	// patches is written against.
+	field, version := "contractVersion", cfg.ContractVersion
+	if version == "" {
+		field, version = "talosVersion", talosVersion
+	}
+
+	contract, err := parseVersionContract(version)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", field, err)
+	}
+
+	// The machinery can only generate config styles it knows about.
+	current, err := tconfig.ParseContractFromVersion(tversion.Tag)
+	if err != nil {
+		return nil, fmt.Errorf("parsing bundled Talos version %q: %w", tversion.Tag, err)
+	}
+
+	if contract.Greater(current) {
+		return nil, fmt.Errorf("%s %s is newer than the Talos machinery talstomize was built with (%s)", field, version, tversion.Tag)
+	}
+
 	var endpoints []string
 
 	for _, node := range cfg.Nodes {
@@ -69,28 +104,7 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		generate.WithSecretsBundle(bundle),
 		generate.WithEndpointList(endpoints),
 		generate.WithAdditionalSubjectAltNames(cfg.AdditionalSubjectAltNames),
-	}
-
-	// The version contract picks the config schema the generated base uses:
-	// the classic, single-document v1alpha1 shape up to Talos 1.13, the
-	// multi-document shape (KubeletConfig, KubePrismConfig, ...) from 1.14
-	// on. It defaults to the version the node will actually run, so a
-	// classic-era node isn't handed documents it can't decode, while
-	// contractVersion overrides it for the cases where the schema has to be
-	// pinned independently of the installer - e.g. a 1.14 node that a repo
-	// of classic-field patches is written against.
-	field, version := "contractVersion", cfg.ContractVersion
-	if version == "" {
-		field, version = "installer.talosVersion", cfg.Installer.TalosVersion
-	}
-
-	contract, err := parseVersionContract(version)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", field, err)
-	}
-
-	if contract != nil {
-		opts = append(opts, generate.WithVersionContract(contract))
+		generate.WithVersionContract(contract),
 	}
 
 	// WithDNSDomain unconditionally overwrites the "cluster.local" default,
@@ -104,18 +118,11 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		return nil, fmt.Errorf("preparing config generation: %w", err)
 	}
 
-	// Only consulted for a Schematic-computed install image, so - unlike
-	// KubernetesVersion - a leading "v" isn't stripped, it's normalized to
-	// always be present: the installer image tag needs it either way.
-	talosVersion := "v" + strings.TrimPrefix(cfg.Installer.TalosVersion, "v")
-	if cfg.Installer.TalosVersion == "" {
-		talosVersion = tversion.Tag
-	}
-
 	return &Engine{
 		cfg:               cfg,
 		input:             input,
 		talosVersion:      talosVersion,
+		contract:          contract,
 		kubernetesVersion: kubernetesVersion,
 		resolveSchematic:  factory.Schematic,
 	}, nil
@@ -127,12 +134,13 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 const contractCurrent = "current"
 
 // parseVersionContract maps a configured Talos version to the machinery
-// version contract describing the config schema to generate. An empty
-// version, and the literal "current", both mean the machinery's current
-// contract - a nil contract, in machinery terms.
+// version contract describing the config schema to generate. The literal
+// "current" means the machinery's own contract, spelled out as the bundled
+// Talos version rather than machinery's nil contract, so that it can still
+// be compared against other contracts.
 func parseVersionContract(version string) (*tconfig.VersionContract, error) {
-	if version == "" || version == contractCurrent {
-		return tconfig.TalosVersionCurrent, nil
+	if version == contractCurrent {
+		version = tversion.Tag
 	}
 
 	contract, err := tconfig.ParseContractFromVersion(version)
@@ -178,54 +186,45 @@ func loadSecretsBundle(path string) (*secrets.Bundle, error) {
 	return bundle, nil
 }
 
-// effectiveInstallImage resolves the install image for node: its own
-// installer.image or installer.schematic if set (config.validate already
-// rejects both being set at once), else the cluster-wide installer.image
-// or installer.schematic, else "" - left for patches to set, same as when
-// neither is configured.
-func (e *Engine) effectiveInstallImage(node tstomcfg.Node) (string, error) {
-	switch {
-	case node.Installer.Image != "":
-		return node.Installer.Image, nil
-	case node.Installer.SchematicSet():
-		return e.resolveSchematicImage(node.Installer.Schematic)
-	case e.cfg.Installer.Image != "":
-		return e.cfg.Installer.Image, nil
-	case e.cfg.Installer.SchematicSet():
-		return e.resolveSchematicImage(e.cfg.Installer.Schematic)
-	default:
-		return "", nil
+// effectiveInstaller returns the installer config effective for node: its
+// own installer if it sets a schematic (a full replacement, not merged),
+// else the cluster-wide one.
+func (e *Engine) effectiveInstaller(node tstomcfg.Node) tstomcfg.Installer {
+	if node.Installer.SchematicSet() {
+		return node.Installer
 	}
+
+	return e.cfg.Installer
 }
 
-// EffectiveCustomization returns the parsed schematic customization
-// (extra kernel args + desired system extensions) effective for node,
-// mirroring effectiveInstallImage's precedence: node's own
-// installer.schematic, else the cluster-wide one. ok is false when
-// neither is set, or when a literal installer.image is used instead -
-// there's nothing to compare extensions/kernel args against in that case,
-// same "left for patches" reasoning as effectiveInstallImage's "" result.
-func (e *Engine) EffectiveCustomization(node tstomcfg.Node) (customization factory.Customization, ok bool, err error) {
-	var schematic yaml.Node
-
-	switch {
-	case node.Installer.Image != "":
-		return factory.Customization{}, false, nil
-	case node.Installer.SchematicSet():
-		schematic = node.Installer.Schematic
-	case e.cfg.Installer.Image != "":
-		return factory.Customization{}, false, nil
-	case e.cfg.Installer.SchematicSet():
-		schematic = e.cfg.Installer.Schematic
-	default:
-		return factory.Customization{}, false, nil
+// InstallImage resolves the installer image talstomize computes for node:
+// its effective schematic (or the vanilla one, if none is set) tagged with
+// the cluster's talosVersion.
+func (e *Engine) InstallImage(node tstomcfg.Node) (string, error) {
+	installer := e.effectiveInstaller(node)
+	if !installer.SchematicSet() {
+		return factory.InstallerImage(factory.VanillaSchematicID, e.talosVersion), nil
 	}
 
-	if err := schematic.Decode(&customization); err != nil {
-		return factory.Customization{}, false, fmt.Errorf("parsing schematic: %w", err)
+	return e.resolveSchematicImage(installer.Schematic)
+}
+
+// EffectiveCustomization returns the parsed schematic customization (extra
+// kernel args + desired system extensions) effective for node, with the
+// same precedence as InstallImage - empty for the vanilla schematic.
+func (e *Engine) EffectiveCustomization(node tstomcfg.Node) (factory.Customization, error) {
+	var customization factory.Customization
+
+	installer := e.effectiveInstaller(node)
+	if !installer.SchematicSet() {
+		return customization, nil
 	}
 
-	return customization, true, nil
+	if err := installer.Schematic.Decode(&customization); err != nil {
+		return factory.Customization{}, fmt.Errorf("parsing schematic: %w", err)
+	}
+
+	return customization, nil
 }
 
 // resolveSchematicImage posts schematic to the Image Factory (memoized, so
@@ -274,13 +273,15 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 		return nil, fmt.Errorf("generating base config for node %q: %w", name, err)
 	}
 
-	// The base config carries a default `HostnameConfig{auto: stable}` document; switch
-	// it to a static hostname (Talos rejects `auto` and `hostname` being set together)
-	// rather than using the deprecated machine.network.hostname field.
-	hostnamePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil,
-		"apiVersion: v1alpha1\nkind: HostnameConfig\nauto: \"off\"\nhostname: %s\n",
-		name,
-	))
+	// From Talos 1.12, the base config carries a default `HostnameConfig{auto: stable}`
+	// document; switch it to a static hostname (Talos rejects `auto` and `hostname`
+	// being set together). Older versions only have machine.network.hostname.
+	hostnameFormat := "machine:\n  network:\n    hostname: %s\n"
+	if e.contract.MultidocNetworkConfigSupported() {
+		hostnameFormat = "apiVersion: v1alpha1\nkind: HostnameConfig\nauto: \"off\"\nhostname: %s\n"
+	}
+
+	hostnamePatch, err := configpatcher.LoadPatch(fmt.Appendf(nil, hostnameFormat, name))
 	if err != nil {
 		return nil, fmt.Errorf("node %q: building hostname patch: %w", name, err)
 	}
@@ -295,13 +296,9 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 		return nil, fmt.Errorf("node %q: applying patches: %w", name, err)
 	}
 
-	installImage, err := e.effectiveInstallImage(node)
+	installImage, err := e.InstallImage(node)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: resolving install image: %w", name, err)
-	}
-
-	if installImage == "" {
-		return rendered, nil
 	}
 
 	// Where the install image patch goes depends on what the user's patches did,
@@ -309,7 +306,7 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 	// patch placed *before* the user's patches rather than merged on afterwards:
 	// merging any UnattendedInstallConfig patch without a diskSelector onto one that
 	// has it wipes it (cel.Expression.Merge copies the right side unconditionally).
-	imagePatchFormat, ok := installImagePatch(rendered)
+	imagePatchFormat, ok := installImagePatch(rendered, e.contract)
 	if !ok {
 		return rendered, nil
 	}
@@ -369,10 +366,10 @@ func applyPatches(base tconfig.Provider, patches []configpatcher.Patch) (tconfig
 // the image) that sets the install image wherever rendered declares the rest
 // of its install config - an UnattendedInstallConfig document, or the legacy
 // v1alpha1 machine.install block - since Talos rejects a config that uses
-// both. With neither present, it defaults to an UnattendedInstallConfig
-// document, the Talos 1.14+ way. ok is false when a patch already set an
-// install image explicitly, which always wins.
-func installImagePatch(rendered tconfig.Provider) (format string, ok bool) {
+// both. With neither present, it follows contract: an UnattendedInstallConfig
+// document from Talos 1.14, machine.install before that. ok is false when a
+// patch already set an install image explicitly, which always wins.
+func installImagePatch(rendered tconfig.Provider, contract *tconfig.VersionContract) (format string, ok bool) {
 	const (
 		unattended = "apiVersion: v1alpha1\nkind: UnattendedInstallConfig\ninstaller:\n  image: %s\n"
 		legacy     = "machine:\n  install:\n    image: %s\n"
@@ -382,11 +379,14 @@ func installImagePatch(rendered tconfig.Provider) (format string, ok bool) {
 		return "", false
 	}
 
-	if rendered.UnattendedInstallConfig() == nil && legacyInstall(rendered) != nil {
+	switch {
+	case rendered.UnattendedInstallConfig() != nil:
+		return unattended, true
+	case legacyInstall(rendered) != nil, !contract.UnattendedInstallConfig():
 		return legacy, true
+	default:
+		return unattended, true
 	}
-
-	return unattended, true
 }
 
 // legacyInstall returns cfg's deprecated v1alpha1 machine.install block, or
