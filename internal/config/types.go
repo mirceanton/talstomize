@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,8 +169,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
+	// Unknown fields are rejected rather than silently ignored, so a typo -
+	// or a field from an older talstomize.yaml format - fails loudly.
+	decoder := yaml.NewDecoder(bytes.NewReader(contents))
+	decoder.KnownFields(true)
+
 	var cfg Config
-	if err := yaml.Unmarshal(contents, &cfg); err != nil {
+	if err := decoder.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
