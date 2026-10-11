@@ -6,35 +6,51 @@ clusterName: home-cluster
 controlPlaneEndpoint: https://10.5.0.2:6443
 secrets: ./talos-secrets.yaml
 
-# Cluster-wide default; nodea overrides it below (e.g. for a custom
-# Image Factory schematic that only that node needs).
+# Every node runs this Talos version; it also selects the config style generated.
+talosVersion: v1.14.2
+
+# Cluster-wide installer default (vanilla when unset); nodea overrides it below
+# with an Image Factory schematic that only that node needs.
 installer:
-  image: ghcr.io/siderolabs/installer:v1.9.5
+  schematic:
+    customization:
+      systemExtensions:
+        officialExtensions:
+          - siderolabs/iscsi-tools
 
 nodes:
   nodea:
     ip: 10.5.0.11
     kind: controlplane
     installer:
-      image: factory.talos.dev/metal-installer/abc123:v1.9.5
+      schematic:
+        customization:
+          systemExtensions:
+            officialExtensions:
+              - siderolabs/iscsi-tools
+              - siderolabs/zfs
     patches:
       - ./patches/nodea-disk.yaml
   nodeb:
     ip: 10.5.0.12
     kind: worker
     patches:
-      - machine:
-          install:
-            disk: "/dev/nvme0n1"
-      - machine:
-          time:
-            servers:
-              - time.cloudflare.com
+      - apiVersion: v1alpha1
+        kind: UnattendedInstallConfig
+        provisioning:
+          diskSelector:
+            match: disk.dev_path == "/dev/nvme0n1"
+      - apiVersion: v1alpha1
+        kind: TimeSyncConfig
+        ntp:
+          servers:
+            - time.cloudflare.com
 
 patches:
-  - machine:
-      sysctls:
-        net.core.somaxconn: "1024"
+  - apiVersion: v1alpha1
+    kind: SysctlConfig
+    params:
+      net.core.somaxconn: "1024"
 
 controlplanePatches:
   - ./patches/controlplane-common.yaml
