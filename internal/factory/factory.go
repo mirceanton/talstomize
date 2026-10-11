@@ -23,6 +23,12 @@ var (
 	httpClient = &http.Client{Timeout: 30 * time.Second}
 )
 
+// VanillaSchematicID is the Image Factory schematic ID of the empty
+// customization (no extensions, no extra kernel args) - the stock Talos
+// installer, and what talosctl gen config defaults to. Fixed, since a
+// schematic ID is a content hash of its customization.
+const VanillaSchematicID = "376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba"
+
 // Customization is the subset of a schematic customization document
 // talstomize reads back out (e.g. to compare against what's actually
 // installed on a node), rather than just posting opaquely to the Factory.
