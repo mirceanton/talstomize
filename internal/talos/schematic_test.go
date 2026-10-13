@@ -2,12 +2,19 @@ package talos
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
+	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
 	"gopkg.in/yaml.v3"
 
 	tstomcfg "github.com/mirceanton/talstomize/internal/config"
+	"github.com/mirceanton/talstomize/internal/factory"
 )
 
 func yamlNode(t *testing.T, doc string) yaml.Node {
@@ -25,75 +32,37 @@ func yamlNode(t *testing.T, doc string) yaml.Node {
 	return *n.Content[0]
 }
 
-func TestEffectiveInstallImagePrecedence(t *testing.T) {
-	calls := 0
-
+func TestInstallImageNodeSchematicOverridesCluster(t *testing.T) {
 	e := &Engine{
 		cfg: &tstomcfg.Config{
-			Installer: tstomcfg.Installer{Image: "cluster-wide-image"},
-		},
-		talosVersion: "v1.13.8",
-		resolveSchematic: func(_ []byte) (string, error) {
-			calls++
-
-			return "cluster-schematic-id", nil
-		},
-	}
-
-	// node.Installer.Image wins outright, no schematic call.
-	node := tstomcfg.Node{Installer: tstomcfg.NodeInstaller{Image: "node-image"}}
-
-	got, err := e.effectiveInstallImage(node)
-	if err != nil {
-		t.Fatalf("effectiveInstallImage: %v", err)
-	}
-
-	if got != "node-image" {
-		t.Errorf("effectiveInstallImage() = %q, want %q", got, "node-image")
-	}
-
-	// Nothing set on the node: falls back to the cluster-wide Installer.Image.
-	got, err = e.effectiveInstallImage(tstomcfg.Node{})
-	if err != nil {
-		t.Fatalf("effectiveInstallImage: %v", err)
-	}
-
-	if got != "cluster-wide-image" {
-		t.Errorf("effectiveInstallImage() = %q, want %q", got, "cluster-wide-image")
-	}
-
-	if calls != 0 {
-		t.Errorf("resolveSchematic called %d times, want 0 (Installer.Image should win over Installer.Schematic)", calls)
-	}
-}
-
-func TestEffectiveInstallImageNodeSchematicOverridesClusterInstallImage(t *testing.T) {
-	e := &Engine{
-		cfg: &tstomcfg.Config{
-			Installer: tstomcfg.Installer{Image: "cluster-wide-image"},
+			Installer: tstomcfg.Installer{Schematic: yamlNode(t, "customization:\n  extraKernelArgs: [cluster]\n")},
 		},
 		talosVersion: "v1.13.8",
 		resolveSchematic: func(raw []byte) (string, error) {
+			if strings.Contains(string(raw), "cluster") {
+				return "cluster-schematic-id", nil
+			}
+
 			return "node-schematic-id", nil
 		},
 	}
 
 	node := tstomcfg.Node{
-		Installer: tstomcfg.NodeInstaller{Schematic: yamlNode(t, "customization:\n  extraKernelArgs: [foo]\n")},
+		Installer: tstomcfg.Installer{Schematic: yamlNode(t, "customization:\n  extraKernelArgs: [node]\n")},
 	}
 
-	got, err := e.effectiveInstallImage(node)
+	got, err := e.InstallImage(node)
 	if err != nil {
-		t.Fatalf("effectiveInstallImage: %v", err)
+		t.Fatalf("InstallImage: %v", err)
 	}
 
 	want := "factory.talos.dev/metal-installer/node-schematic-id:v1.13.8"
 	if got != want {
-		t.Errorf("effectiveInstallImage() = %q, want %q", got, want)
+		t.Errorf("InstallImage() = %q, want %q", got, want)
 	}
 }
 
-func TestEffectiveInstallImageClusterSchematic(t *testing.T) {
+func TestInstallImageClusterSchematic(t *testing.T) {
 	e := &Engine{
 		cfg: &tstomcfg.Config{
 			Installer: tstomcfg.Installer{
@@ -106,31 +75,40 @@ func TestEffectiveInstallImageClusterSchematic(t *testing.T) {
 		},
 	}
 
-	got, err := e.effectiveInstallImage(tstomcfg.Node{})
+	got, err := e.InstallImage(tstomcfg.Node{})
 	if err != nil {
-		t.Fatalf("effectiveInstallImage: %v", err)
+		t.Fatalf("InstallImage: %v", err)
 	}
 
 	want := "factory.talos.dev/metal-installer/cluster-schematic-id:v1.9.5"
 	if got != want {
-		t.Errorf("effectiveInstallImage() = %q, want %q", got, want)
+		t.Errorf("InstallImage() = %q, want %q", got, want)
 	}
 }
 
-func TestEffectiveInstallImageNoneSet(t *testing.T) {
-	e := &Engine{cfg: &tstomcfg.Config{}, talosVersion: "v1.13.8"}
+func TestInstallImageNoneSetUsesVanillaSchematic(t *testing.T) {
+	e := &Engine{
+		cfg:          &tstomcfg.Config{},
+		talosVersion: "v1.13.8",
+		resolveSchematic: func(_ []byte) (string, error) {
+			t.Fatal("resolveSchematic called, want the vanilla schematic ID without a Factory round trip")
 
-	got, err := e.effectiveInstallImage(tstomcfg.Node{})
+			return "", nil
+		},
+	}
+
+	got, err := e.InstallImage(tstomcfg.Node{})
 	if err != nil {
-		t.Fatalf("effectiveInstallImage: %v", err)
+		t.Fatalf("InstallImage: %v", err)
 	}
 
-	if got != "" {
-		t.Errorf("effectiveInstallImage() = %q, want empty (left for patches)", got)
+	want := "factory.talos.dev/metal-installer/" + factory.VanillaSchematicID + ":v1.13.8"
+	if got != want {
+		t.Errorf("InstallImage() = %q, want %q", got, want)
 	}
 }
 
-func TestEffectiveInstallImageSchematicError(t *testing.T) {
+func TestInstallImageSchematicError(t *testing.T) {
 	e := &Engine{
 		cfg: &tstomcfg.Config{
 			Installer: tstomcfg.Installer{
@@ -143,8 +121,8 @@ func TestEffectiveInstallImageSchematicError(t *testing.T) {
 		},
 	}
 
-	if _, err := e.effectiveInstallImage(tstomcfg.Node{}); err == nil {
-		t.Fatal("effectiveInstallImage: expected an error, got nil")
+	if _, err := e.InstallImage(tstomcfg.Node{}); err == nil {
+		t.Fatal("InstallImage: expected an error, got nil")
 	}
 }
 
@@ -152,18 +130,14 @@ func TestEffectiveCustomizationNodeSchematic(t *testing.T) {
 	e := &Engine{cfg: &tstomcfg.Config{}}
 
 	node := tstomcfg.Node{
-		Installer: tstomcfg.NodeInstaller{
+		Installer: tstomcfg.Installer{
 			Schematic: yamlNode(t, "customization:\n  extraKernelArgs: [foo=1]\n  systemExtensions:\n    officialExtensions: [siderolabs/zfs]\n"),
 		},
 	}
 
-	got, ok, err := e.EffectiveCustomization(node)
+	got, err := e.EffectiveCustomization(node)
 	if err != nil {
 		t.Fatalf("EffectiveCustomization: %v", err)
-	}
-
-	if !ok {
-		t.Fatal("EffectiveCustomization: ok = false, want true")
 	}
 
 	if want := []string{"foo=1"}; !slices.Equal(got.Customization.ExtraKernelArgs, want) {
@@ -184,13 +158,9 @@ func TestEffectiveCustomizationClusterSchematic(t *testing.T) {
 		},
 	}
 
-	got, ok, err := e.EffectiveCustomization(tstomcfg.Node{})
+	got, err := e.EffectiveCustomization(tstomcfg.Node{})
 	if err != nil {
 		t.Fatalf("EffectiveCustomization: %v", err)
-	}
-
-	if !ok {
-		t.Fatal("EffectiveCustomization: ok = false, want true")
 	}
 
 	if want := []string{"siderolabs/zfs"}; !slices.Equal(got.Customization.SystemExtensions.OfficialExtensions, want) {
@@ -208,18 +178,14 @@ func TestEffectiveCustomizationNodeSchematicOverridesCluster(t *testing.T) {
 	}
 
 	node := tstomcfg.Node{
-		Installer: tstomcfg.NodeInstaller{
+		Installer: tstomcfg.Installer{
 			Schematic: yamlNode(t, "customization:\n  systemExtensions:\n    officialExtensions: [siderolabs/nvidia-container-toolkit-production]\n"),
 		},
 	}
 
-	got, ok, err := e.EffectiveCustomization(node)
+	got, err := e.EffectiveCustomization(node)
 	if err != nil {
 		t.Fatalf("EffectiveCustomization: %v", err)
-	}
-
-	if !ok {
-		t.Fatal("EffectiveCustomization: ok = false, want true")
 	}
 
 	want := []string{"siderolabs/nvidia-container-toolkit-production"}
@@ -228,37 +194,17 @@ func TestEffectiveCustomizationNodeSchematicOverridesCluster(t *testing.T) {
 	}
 }
 
-func TestEffectiveCustomizationLiteralImageNoSchematic(t *testing.T) {
-	for name, node := range map[string]tstomcfg.Node{
-		"node installer.image": {Installer: tstomcfg.NodeInstaller{Image: "ghcr.io/siderolabs/installer:v1.13.8"}},
-		"nothing set":          {},
-	} {
-		t.Run(name, func(t *testing.T) {
-			e := &Engine{cfg: &tstomcfg.Config{}}
+func TestEffectiveCustomizationNoneSet(t *testing.T) {
+	e := &Engine{cfg: &tstomcfg.Config{}}
 
-			_, ok, err := e.EffectiveCustomization(node)
-			if err != nil {
-				t.Fatalf("EffectiveCustomization: %v", err)
-			}
-
-			if ok {
-				t.Error("EffectiveCustomization: ok = true, want false (no schematic to compare against)")
-			}
-		})
+	got, err := e.EffectiveCustomization(tstomcfg.Node{})
+	if err != nil {
+		t.Fatalf("EffectiveCustomization: %v", err)
 	}
 
-	t.Run("cluster-wide installer.image, no schematic anywhere", func(t *testing.T) {
-		e := &Engine{cfg: &tstomcfg.Config{Installer: tstomcfg.Installer{Image: "ghcr.io/siderolabs/installer:v1.13.8"}}}
-
-		_, ok, err := e.EffectiveCustomization(tstomcfg.Node{})
-		if err != nil {
-			t.Fatalf("EffectiveCustomization: %v", err)
-		}
-
-		if ok {
-			t.Error("EffectiveCustomization: ok = true, want false (no schematic to compare against)")
-		}
-	})
+	if len(got.Customization.ExtraKernelArgs) != 0 || len(got.Customization.SystemExtensions.OfficialExtensions) != 0 {
+		t.Errorf("EffectiveCustomization() = %+v, want empty (vanilla schematic)", got)
+	}
 }
 
 func TestResolveSchematicImageMemoizes(t *testing.T) {
@@ -283,5 +229,85 @@ func TestResolveSchematicImageMemoizes(t *testing.T) {
 
 	if calls != 1 {
 		t.Errorf("resolveSchematic called %d times, want 1 (should be memoized)", calls)
+	}
+}
+
+// A node's own installer replaces the cluster-wide one wholesale when
+// rendering, and both are tagged with the cluster-wide talosVersion.
+func TestRenderNodeNodeInstallerOverride(t *testing.T) {
+	dir := t.TempDir()
+
+	bundle, err := secrets.NewBundle(secrets.NewFixedClock(time.Now()), tconfig.TalosVersionCurrent)
+	if err != nil {
+		t.Fatalf("generating secrets bundle: %v", err)
+	}
+
+	raw, err := yaml.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("encoding secrets bundle: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "talos-secrets.yaml"), raw, 0o600); err != nil {
+		t.Fatalf("writing secrets bundle: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "talstomize.yaml"), []byte(`
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+talosVersion: v1.14.2
+installer:
+  schematic:
+    customization:
+      systemExtensions:
+        officialExtensions: [siderolabs/zfs]
+nodes:
+  gpu:
+    ip: 10.5.0.11
+    kind: controlplane
+    installer:
+      schematic:
+        customization:
+          systemExtensions:
+            officialExtensions: [siderolabs/nvidia-container-toolkit-production]
+  plain:
+    ip: 10.5.0.12
+    kind: worker
+`), 0o600); err != nil {
+		t.Fatalf("writing talstomize.yaml: %v", err)
+	}
+
+	cfg, err := tstomcfg.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	e, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	e.resolveSchematic = func(raw []byte) (string, error) {
+		if strings.Contains(string(raw), "nvidia") {
+			return "gpu-schematic-id", nil
+		}
+
+		return "cluster-schematic-id", nil
+	}
+
+	for node, want := range map[string]string{
+		"gpu":   "factory.talos.dev/metal-installer/gpu-schematic-id:v1.14.2",
+		"plain": "factory.talos.dev/metal-installer/cluster-schematic-id:v1.14.2",
+	} {
+		rendered, err := e.RenderNode(node)
+		if err != nil {
+			t.Fatalf("RenderNode(%s): %v", node, err)
+		}
+
+		if got := InstallImage(rendered); got != want {
+			t.Errorf("%s install image = %q, want %q", node, got, want)
+		}
 	}
 }

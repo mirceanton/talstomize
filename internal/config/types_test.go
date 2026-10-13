@@ -289,3 +289,65 @@ nodes:
 		t.Fatal("Load: expected an error for a malformed .env file, got nil")
 	}
 }
+
+// Unknown fields - typos, or ones removed from the talstomize.yaml format
+// (e.g. installer.image, installer.talosVersion) - must fail loudly instead
+// of being silently ignored.
+func TestLoadRejectsUnknownFields(t *testing.T) {
+	for name, extra := range map[string]string{
+		"top-level typo":                 "kubernetesVerison: v1.37.1\n",
+		"removed installer.image":        "installer:\n  image: ghcr.io/siderolabs/installer:v1.14.2\n",
+		"removed installer.talosVersion": "installer:\n  talosVersion: v1.14.2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`+extra)
+
+			if _, err := Load(dir); err == nil {
+				t.Fatal("Load: expected an error for an unknown field, got nil")
+			}
+		})
+	}
+}
+
+func TestLoadTalosVersion(t *testing.T) {
+	for version, wantErr := range map[string]bool{
+		"v1.14.2":      false,
+		"1.13.8":       false,
+		"latest":       true,
+		"one.fourteen": true,
+	} {
+		t.Run(version, func(t *testing.T) {
+			dir := t.TempDir()
+
+			writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+talosVersion: `+version+`
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+			_, err := Load(dir)
+			if gotErr := err != nil; gotErr != wantErr {
+				t.Fatalf("Load: err = %v, want error = %v", err, wantErr)
+			}
+		})
+	}
+}

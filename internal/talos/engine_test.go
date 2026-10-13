@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/mirceanton/talstomize/internal/config"
+	"github.com/mirceanton/talstomize/internal/factory"
 	"github.com/mirceanton/talstomize/internal/talos"
 )
 
@@ -196,15 +197,15 @@ func TestEngineRenderNodeVersionContract(t *testing.T) {
 			classic: false,
 		},
 		{
-			name:    "installer.talosVersion is the default contract",
-			fields:  "installer:\n  image: ghcr.io/siderolabs/installer:v1.13.10\n  talosVersion: v1.13.10\n",
+			name:    "talosVersion is the default contract",
+			fields:  "talosVersion: v1.13.10\n",
 			classic: true,
 		},
 		{
 			// The homelab case: a node already running 1.14, with every
 			// patch written against the classic fields.
-			name:    "contractVersion overrides installer.talosVersion",
-			fields:  "contractVersion: v1.13.10\ninstaller:\n  image: ghcr.io/siderolabs/installer:v1.14.2\n  talosVersion: v1.14.2\n",
+			name:    "contractVersion overrides talosVersion",
+			fields:  "contractVersion: v1.13.10\ntalosVersion: v1.14.2\n",
 			classic: true,
 		},
 		{
@@ -213,8 +214,8 @@ func TestEngineRenderNodeVersionContract(t *testing.T) {
 			classic: false,
 		},
 		{
-			name:    "contractVersion current ignores installer.talosVersion",
-			fields:  "contractVersion: current\ninstaller:\n  talosVersion: v1.13.10\n",
+			name:    "contractVersion current ignores talosVersion",
+			fields:  "contractVersion: current\ntalosVersion: v1.13.10\n",
 			classic: false,
 		},
 	} {
@@ -258,10 +259,6 @@ workerPatches: []
 			if got, want := hasSetKey(nodeaYAML, "kubelet:"), tc.classic; got != want {
 				t.Errorf("machine.kubelet block emitted = %v, want %v", got, want)
 			}
-
-			if got, want := strings.Contains(nodeaYAML, "\n---\n"), !tc.classic; got != want {
-				t.Errorf("multi-document separator emitted = %v, want %v", got, want)
-			}
 		})
 	}
 }
@@ -277,11 +274,6 @@ func TestEngineNewEngineInvalidVersionContract(t *testing.T) {
 			name:   "contractVersion",
 			fields: "contractVersion: not-a-version\n",
 			want:   "contractVersion",
-		},
-		{
-			name:   "installer.talosVersion",
-			fields: "installer:\n  talosVersion: not-a-version\n",
-			want:   "installer.talosVersion",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -368,6 +360,8 @@ workerPatches: []
 	}
 }
 
+// With no installer schematic anywhere, every node gets the vanilla Image
+// Factory installer, tagged with the cluster-wide talosVersion.
 func TestEngineRenderNodeInstallImage(t *testing.T) {
 	dir := t.TempDir()
 
@@ -379,19 +373,14 @@ kind: Talstomize
 clusterName: test-cluster
 controlPlaneEndpoint: https://10.5.0.2:6443
 secrets: ./talos-secrets.yaml
-installer:
-  image: ghcr.io/siderolabs/installer:v1.9.5
+talosVersion: 1.14.1
 nodes:
   nodea:
     ip: 10.5.0.11
     kind: controlplane
-    installer:
-      image: factory.talos.dev/metal-installer/abc123:v1.9.5
   nodeb:
     ip: 10.5.0.12
     kind: worker
-controlplanePatches: []
-workerPatches: []
 `)
 
 	cfg, err := config.Load(dir)
@@ -404,20 +393,258 @@ workerPatches: []
 		t.Fatalf("NewEngine: %v", err)
 	}
 
-	nodeaYAML := mustString(t, mustRenderNode(t, engine, "nodea"))
+	want := "factory.talos.dev/metal-installer/" + factory.VanillaSchematicID + ":v1.14.1"
 
-	if !hasSetLine(nodeaYAML, "image: factory.talos.dev/metal-installer/abc123:v1.9.5") {
-		t.Errorf("nodea config should use its own installer.image override, got:\n%s", nodeaYAML)
+	for _, name := range []string{"nodea", "nodeb"} {
+		if got := talos.InstallImage(mustRenderNode(t, engine, name)); got != want {
+			t.Errorf("%s install image = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// talosVersion selects the machine config style of the base config: legacy
+// v1alpha1 fields before the multi-doc equivalents existed. Patches are
+// passed through as-is either way.
+func TestEngineRenderNodeTalosVersionContract(t *testing.T) {
+	for _, tc := range []struct {
+		talosVersion   string
+		wantUnattended bool
+		wantHostDoc    bool
+	}{
+		{talosVersion: "v1.11.5", wantUnattended: false, wantHostDoc: false},
+		{talosVersion: "v1.13.8", wantUnattended: false, wantHostDoc: true},
+		{talosVersion: "v1.14.2", wantUnattended: true, wantHostDoc: true},
+	} {
+		t.Run(tc.talosVersion, func(t *testing.T) {
+			dir := t.TempDir()
+
+			writeSecretsBundle(t, dir)
+
+			writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+talosVersion: `+tc.talosVersion+`
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+			cfg, err := config.Load(dir)
+			if err != nil {
+				t.Fatalf("config.Load: %v", err)
+			}
+
+			engine, err := talos.NewEngine(cfg)
+			if err != nil {
+				t.Fatalf("NewEngine: %v", err)
+			}
+
+			rendered := mustRenderNode(t, engine, "nodea")
+
+			if got := rendered.UnattendedInstallConfig() != nil; got != tc.wantUnattended {
+				t.Errorf("UnattendedInstallConfig present = %v, want %v", got, tc.wantUnattended)
+			}
+
+			if got := rendered.RawV1Alpha1().MachineConfig.MachineInstall != nil; got == tc.wantUnattended { //nolint:staticcheck
+				t.Errorf("legacy machine.install present = %v, want %v", got, !tc.wantUnattended)
+			}
+
+			if want := "factory.talos.dev/metal-installer/" + factory.VanillaSchematicID + ":" + tc.talosVersion; talos.InstallImage(rendered) != want {
+				t.Errorf("install image = %q, want %q", talos.InstallImage(rendered), want)
+			}
+
+			network := rendered.RawV1Alpha1().MachineConfig.MachineNetwork //nolint:staticcheck
+
+			legacyHostname := ""
+			if network != nil {
+				legacyHostname = network.NetworkHostname //nolint:staticcheck
+			}
+
+			if tc.wantHostDoc {
+				if legacyHostname != "" {
+					t.Errorf("legacy machine.network.hostname = %q, want unset", legacyHostname)
+				}
+
+				if got := rendered.NetworkHostnameConfig().Hostname(); got != "nodea" {
+					t.Errorf("HostnameConfig hostname = %q, want %q", got, "nodea")
+				}
+			} else if legacyHostname != "nodea" {
+				t.Errorf("legacy machine.network.hostname = %q, want %q", legacyHostname, "nodea")
+			}
+		})
+	}
+}
+
+func TestEngineTalosVersionTooNew(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+talosVersion: v99.0.0
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
 	}
 
-	if hasSetLine(nodeaYAML, "image: ghcr.io/siderolabs/installer:v1.9.5") {
-		t.Errorf("nodea config should not fall back to the cluster-wide installer.image once overridden, got:\n%s", nodeaYAML)
+	if _, err := talos.NewEngine(cfg); err == nil || !strings.Contains(err.Error(), "newer than") {
+		t.Fatalf("NewEngine: err = %v, want a \"newer than\" error", err)
+	}
+}
+
+// Talos rejects a config that sets both an UnattendedInstallConfig document
+// and the legacy machine.install block, so the install image must land in
+// whichever one the patches already use - and never override an image a
+// patch set explicitly.
+func TestEngineRenderNodeInstallImagePlacement(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+talosVersion: v1.14.2
+nodes:
+  unattended:
+    ip: 10.5.0.11
+    kind: controlplane
+    patches:
+      - apiVersion: v1alpha1
+        kind: UnattendedInstallConfig
+        provisioning:
+          diskSelector:
+            match: disk.dev_path == "/dev/sda"
+  legacy:
+    ip: 10.5.0.12
+    kind: worker
+    patches:
+      - machine:
+          install:
+            disk: /dev/sda
+  bare:
+    ip: 10.5.0.13
+    kind: worker
+  explicit:
+    ip: 10.5.0.14
+    kind: worker
+    patches:
+      - apiVersion: v1alpha1
+        kind: UnattendedInstallConfig
+        installer:
+          image: ghcr.io/example/installer:custom
+        provisioning:
+          diskSelector:
+            match: disk.dev_path == "/dev/sda"
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
 	}
 
-	nodebYAML := mustString(t, mustRenderNode(t, engine, "nodeb"))
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
 
-	if !hasSetLine(nodebYAML, "image: ghcr.io/siderolabs/installer:v1.9.5") {
-		t.Errorf("nodeb config should fall back to the cluster-wide installer.image, got:\n%s", nodebYAML)
+	vanilla := "factory.talos.dev/metal-installer/" + factory.VanillaSchematicID + ":v1.14.2"
+
+	for _, tc := range []struct {
+		node       string
+		wantImage  string
+		wantLegacy bool
+	}{
+		{node: "unattended", wantImage: vanilla},
+		{node: "legacy", wantImage: vanilla, wantLegacy: true},
+		{node: "bare", wantImage: vanilla},
+		{node: "explicit", wantImage: "ghcr.io/example/installer:custom"},
+	} {
+		t.Run(tc.node, func(t *testing.T) {
+			rendered := mustRenderNode(t, engine, tc.node)
+
+			if got := talos.InstallImage(rendered); got != tc.wantImage {
+				t.Errorf("InstallImage() = %q, want %q", got, tc.wantImage)
+			}
+
+			hasUnattended := rendered.UnattendedInstallConfig() != nil
+			hasLegacy := rendered.RawV1Alpha1().MachineConfig.MachineInstall != nil //nolint:staticcheck
+
+			if hasUnattended == hasLegacy {
+				t.Fatalf("want exactly one of UnattendedInstallConfig / machine.install, got unattended=%v legacy=%v:\n%s",
+					hasUnattended, hasLegacy, mustString(t, rendered))
+			}
+
+			if hasLegacy != tc.wantLegacy {
+				t.Errorf("legacy machine.install set = %v, want %v", hasLegacy, tc.wantLegacy)
+			}
+
+			// Setting the image must not clobber the install disk the patches declared.
+			if tc.node != "bare" {
+				renderedYAML := mustString(t, rendered)
+				if !hasSetLine(renderedYAML, `match: disk.dev_path == "/dev/sda"`) && !hasSetLine(renderedYAML, "disk: /dev/sda") {
+					t.Errorf("install disk lost while setting the install image:\n%s", renderedYAML)
+				}
+			}
+		})
+	}
+}
+
+// The static hostname must use the HostnameConfig document, not the
+// deprecated machine.network.hostname field.
+func TestEngineRenderNodeHostnameConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	writeSecretsBundle(t, dir)
+
+	writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`)
+
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	engine, err := talos.NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+
+	rendered := mustRenderNode(t, engine, "nodea")
+
+	if network := rendered.RawV1Alpha1().MachineConfig.MachineNetwork; network != nil && network.NetworkHostname != "" { //nolint:staticcheck
+		t.Errorf("legacy machine.network.hostname should be unset, got %q", network.NetworkHostname) //nolint:staticcheck
+	}
+
+	if got := rendered.NetworkHostnameConfig().Hostname(); got != "nodea" {
+		t.Errorf("HostnameConfig hostname = %q, want %q", got, "nodea")
 	}
 }
 

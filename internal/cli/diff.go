@@ -171,18 +171,18 @@ func getRunningConfig(ip string, passthrough []string, stderr io.Writer) (tconfi
 }
 
 // diffLiveState compares node's actual live state against what rendered
-// declares - its running Talos OS version, and, if a schematic is
-// configured (Engine.EffectiveCustomization), its installed system
-// extensions and kernel args - returning one line per check that found
-// drift (nil if everything matches). This is what a plain machine-config
-// diff can't catch: bumping installer.talosVersion and applying config
+// declares - its running Talos OS version, and, unless a patch overrode the
+// installer image, its installed system extensions and kernel args against
+// the effective schematic (Engine.EffectiveCustomization) - returning one
+// line per check that found drift (nil if everything matches). This is
+// what a plain machine-config diff can't catch: bumping talosVersion and applying config
 // only changes the *declared* install image, not what's actually booted -
 // the two can already agree with each other while the real node is still
 // on the old version.
 func diffLiveState(engine *talos.Engine, node config.Node, rendered tconfig.Provider, errOut io.Writer, name string, passthrough []string) ([]string, error) {
 	var lines []string
 
-	if target := rendered.Machine().Install().Image(); target != "" {
+	if target := talos.InstallImage(rendered); target != "" {
 		running, err := getRunningTalosVersion(errOut, node.IP, passthrough)
 		if err != nil {
 			return nil, fmt.Errorf("node %q: fetching running Talos version: %w", name, err)
@@ -193,13 +193,20 @@ func diffLiveState(engine *talos.Engine, node config.Node, rendered tconfig.Prov
 		}
 	}
 
-	customization, ok, err := engine.EffectiveCustomization(node)
+	// A patch that sets its own install image overrides the schematic, so
+	// there's nothing to compare extensions/kernel args against.
+	computed, err := engine.InstallImage(node)
 	if err != nil {
-		return nil, fmt.Errorf("node %q: resolving schematic: %w", name, err)
+		return nil, fmt.Errorf("node %q: resolving install image: %w", name, err)
 	}
 
-	if !ok {
+	if talos.InstallImage(rendered) != computed {
 		return lines, nil
+	}
+
+	customization, err := engine.EffectiveCustomization(node)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: resolving schematic: %w", name, err)
 	}
 
 	installed, err := getInstalledExtensions(errOut, node.IP, passthrough)
