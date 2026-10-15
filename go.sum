@@ -164,6 +164,8 @@ github.com/siderolabs/talos/pkg/machinery v1.14.1 h1:dh2PkMNUkndQWSY+iUy9d9rGDKp
 github.com/siderolabs/talos/pkg/machinery v1.14.1/go.mod h1:PEzCUOIG+87NIqBsONm/eQEQQfgoOwWL+r5ANhCrQGU=
 github.com/siderolabs/talos/pkg/machinery v1.14.2 h1:10bW7Nhh2r1zG4kIaGPk719AbvUjazJk5Dwz0eXhWTA=
 github.com/siderolabs/talos/pkg/machinery v1.14.2/go.mod h1:PEzCUOIG+87NIqBsONm/eQEQQfgoOwWL+r5ANhCrQGU=
+github.com/siderolabs/talos/pkg/machinery v1.14.3 h1:6imryO1faX/55fNfu8rL2g5AYc16a/SnBxtWMXdNlqM=
+github.com/siderolabs/talos/pkg/machinery v1.14.3/go.mod h1:PEzCUOIG+87NIqBsONm/eQEQQfgoOwWL+r5ANhCrQGU=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
 github.com/spf13/pflag v1.0.9 h1:9exaQaMOCwffKiiiYk6/BndUBv+iRViNW+4lEMi0PvY=
