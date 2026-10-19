@@ -67,19 +67,11 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 	// The version contract picks the config schema the generated base uses:
 	// the classic, single-document v1alpha1 shape up to Talos 1.13, the
 	// multi-document shape (KubeletConfig, KubePrismConfig, ...) from 1.14
-	// on. It defaults to talosVersion, the version the nodes actually run,
-	// so a classic-era node isn't handed documents it can't decode, while
-	// contractVersion overrides it for the cases where the schema has to be
-	// pinned independently - e.g. a 1.14 node that a repo of classic-field
-	// patches is written against.
-	field, version := "contractVersion", cfg.ContractVersion
-	if version == "" {
-		field, version = "talosVersion", talosVersion
-	}
-
-	contract, err := parseVersionContract(version)
+	// on. It follows talosVersion, the version the nodes actually run, so a
+	// classic-era node isn't handed documents it can't decode.
+	contract, err := tconfig.ParseContractFromVersion(talosVersion)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", field, err)
+		return nil, fmt.Errorf("talosVersion: parsing talos version %q: %w", talosVersion, err)
 	}
 
 	// The machinery can only generate config styles it knows about.
@@ -89,7 +81,7 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 	}
 
 	if contract.Greater(current) {
-		return nil, fmt.Errorf("%s %s is newer than the Talos machinery talstomize was built with (%s)", field, version, tversion.Tag)
+		return nil, fmt.Errorf("talosVersion %s is newer than the Talos machinery talstomize was built with (%s)", talosVersion, tversion.Tag)
 	}
 
 	var endpoints []string
@@ -126,29 +118,6 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		kubernetesVersion: kubernetesVersion,
 		resolveSchematic:  factory.Schematic,
 	}, nil
-}
-
-// contractCurrent is the ContractVersion value that explicitly selects the
-// machinery's current version contract, rather than one derived from a
-// Talos version.
-const contractCurrent = "current"
-
-// parseVersionContract maps a configured Talos version to the machinery
-// version contract describing the config schema to generate. The literal
-// "current" means the machinery's own contract, spelled out as the bundled
-// Talos version rather than machinery's nil contract, so that it can still
-// be compared against other contracts.
-func parseVersionContract(version string) (*tconfig.VersionContract, error) {
-	if version == contractCurrent {
-		version = tversion.Tag
-	}
-
-	contract, err := tconfig.ParseContractFromVersion(version)
-	if err != nil {
-		return nil, fmt.Errorf("parsing talos version %q: %w", version, err)
-	}
-
-	return contract, nil
 }
 
 // KubernetesVersion returns the Kubernetes version every node's config is

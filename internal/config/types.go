@@ -65,15 +65,6 @@ type Config struct {
 	// Optional; defaults to "cluster.local".
 	DNSDomain string `yaml:"dnsDomain,omitempty"`
 
-	// ContractVersion is the Talos version whose config schema ("version
-	// contract") the rendered machine configs are generated against: the
-	// classic single-document shape up to 1.13, the multi-document shape
-	// from 1.14 on. Optional; defaults to TalosVersion. Set it to pin the
-	// schema independently of the version the nodes run, e.g. to keep a
-	// repo of classic-field patches valid on a 1.14 node, or to "current"
-	// for the contract of the Talos version bundled with talstomize.
-	ContractVersion string `yaml:"contractVersion,omitempty"`
-
 	// Installer configures the cluster-wide default installer image,
 	// overridable per node via Node.Installer.
 	Installer Installer `yaml:"installer,omitempty"`
