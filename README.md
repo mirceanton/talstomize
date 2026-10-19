@@ -91,7 +91,10 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
    ```shell
    talstomize build .                  # writes ./_out/nodea.yaml, ./_out/nodeb.yaml, ./_out/talosconfig, ...
    talstomize build . -o ./rendered    # write to ./rendered instead
+   talstomize build . --validate=false # skip validating the rendered configs
    ```
+
+   Every rendered config is first validated with the same static checks as `talosctl validate --mode metal` - schema errors, a missing install disk, or a setting declared in both the classic v1alpha1 fields and their Talos 1.14 document form. If any node fails, nothing is written. These checks can't see the node itself (e.g. whether the install disk actually exists), so `apply` can still be rejected by the node.
 
 4. Or apply them straight to the nodes:
 
@@ -186,7 +189,7 @@ An image a patch sets explicitly in either place always wins - that's how to use
 
 ### Config style
 
-`talosVersion` also picks the *schema* of the rendered config (the "version contract"). Talos 1.14 moved what used to be nested fields (`machine.kubelet`, `machine.features.kubePrism`, `cluster.apiServer`, ...) into standalone documents (`KubeletConfig`, `KubePrismConfig`, `KubeAPIServerConfig`, ...), and the base config is generated in whichever shape matches `talosVersion`. Write your patches in that same shape: Talos 1.14+ rejects a config that sets the same thing both ways, and Talos 1.13 and older can't decode the new documents at all.
+`talosVersion` also picks the *schema* of the rendered config (the "version contract"). Talos 1.14 moved what used to be nested fields (`machine.kubelet`, `machine.features.kubePrism`, `cluster.apiServer`, ...) into standalone documents (`KubeletConfig`, `KubePrismConfig`, `KubeAPIServerConfig`, ...), and the base config is generated in whichever shape matches `talosVersion`. Write your patches in that same shape: Talos 1.14+ rejects a config that sets the same thing both ways, and Talos 1.13 and older can't decode the new documents at all. `build` validates every rendered config, so a mismatch fails at build time rather than at `apply`.
 
 Each patch entry is either:
 
