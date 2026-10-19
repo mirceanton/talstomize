@@ -12,14 +12,18 @@ import (
 )
 
 func newBuildCommand() *cobra.Command {
-	var outputDir string
+	var (
+		outputDir string
+		validate  bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "build [path]",
 		Short: "Render per-node Talos machine configs",
 		Long: "Render per-node Talos machine configs from a talstomize.yaml, applying role and " +
 			"per-node patches, and write one file per node (named <node>.yaml) to the output " +
-			"directory, plus a talosctl client config (named \"talosconfig\").",
+			"directory, plus a talosctl client config (named \"talosconfig\"). Every rendered config " +
+			"is validated the way `talosctl validate --mode metal` would before anything is written.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -48,19 +52,37 @@ func newBuildCommand() *cobra.Command {
 
 			out := cmd.OutOrStdout()
 
-			for _, name := range engine.NodeNames("") {
+			// Everything is rendered (and validated) before anything is written, so a
+			// failing node doesn't leave a half-updated output directory behind.
+			names := engine.NodeNames("")
+			encoded := make(map[string][]byte, len(names))
+
+			for _, name := range names {
 				rendered, err := engine.RenderNode(name)
 				if err != nil {
 					return err
 				}
 
-				encoded, err := rendered.Bytes()
+				if validate {
+					warnings, err := talos.Validate(rendered)
+					if err != nil {
+						return fmt.Errorf("node %q: rendered config is invalid (skip this check with --validate=false): %w", name, err)
+					}
+
+					for _, warning := range warnings {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: node %q: %s\n", name, warning)
+					}
+				}
+
+				encoded[name], err = rendered.Bytes()
 				if err != nil {
 					return fmt.Errorf("encoding config for node %q: %w", name, err)
 				}
+			}
 
+			for _, name := range names {
 				dest := filepath.Join(dir, name+".yaml")
-				if err := os.WriteFile(dest, encoded, 0o600); err != nil {
+				if err := os.WriteFile(dest, encoded[name], 0o600); err != nil {
 					return fmt.Errorf("writing %s: %w", dest, err)
 				}
 
@@ -72,13 +94,13 @@ func newBuildCommand() *cobra.Command {
 				return fmt.Errorf("generating talosconfig: %w", err)
 			}
 
-			encoded, err := talosconfig.Bytes()
+			talosconfigBytes, err := talosconfig.Bytes()
 			if err != nil {
 				return fmt.Errorf("encoding talosconfig: %w", err)
 			}
 
 			dest := filepath.Join(dir, "talosconfig")
-			if err := os.WriteFile(dest, encoded, 0o600); err != nil {
+			if err := os.WriteFile(dest, talosconfigBytes, 0o600); err != nil {
 				return fmt.Errorf("writing %s: %w", dest, err)
 			}
 
@@ -89,6 +111,8 @@ func newBuildCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "directory to write per-node configs to (defaults to \"_out\" next to the talstomize.yaml)")
+
+	cmd.Flags().BoolVar(&validate, "validate", true, "validate every rendered config like talosctl validate --mode metal, failing the build on errors")
 
 	return cmd
 }
