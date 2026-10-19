@@ -202,20 +202,8 @@ func TestEngineRenderNodeVersionContract(t *testing.T) {
 			classic: true,
 		},
 		{
-			// The homelab case: a node already running 1.14, with every
-			// patch written against the classic fields.
-			name:    "contractVersion overrides talosVersion",
-			fields:  "contractVersion: v1.13.10\ntalosVersion: v1.14.2\n",
-			classic: true,
-		},
-		{
-			name:    "contractVersion selects the multi-document contract",
-			fields:  "contractVersion: v1.14.2\n",
-			classic: false,
-		},
-		{
-			name:    "contractVersion current ignores talosVersion",
-			fields:  "contractVersion: current\ntalosVersion: v1.13.10\n",
+			name:    "talosVersion 1.14 selects the multi-document contract",
+			fields:  "talosVersion: v1.14.2\n",
 			classic: false,
 		},
 	} {
@@ -258,55 +246,6 @@ workerPatches: []
 
 			if got, want := hasSetKey(nodeaYAML, "kubelet:"), tc.classic; got != want {
 				t.Errorf("machine.kubelet block emitted = %v, want %v", got, want)
-			}
-		})
-	}
-}
-
-func TestEngineNewEngineInvalidVersionContract(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		// fields are extra top-level talstomize.yaml fields.
-		fields string
-		want   string
-	}{
-		{
-			name:   "contractVersion",
-			fields: "contractVersion: not-a-version\n",
-			want:   "contractVersion",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-
-			writeSecretsBundle(t, dir)
-
-			writeFile(t, filepath.Join(dir, "talstomize.yaml"), `
-apiVersion: config.talstomize.dev/v1alpha1
-kind: Talstomize
-clusterName: test-cluster
-controlPlaneEndpoint: https://10.5.0.2:6443
-secrets: ./talos-secrets.yaml
-`+tc.fields+`nodes:
-  nodea:
-    ip: 10.5.0.11
-    kind: controlplane
-controlplanePatches: []
-workerPatches: []
-`)
-
-			cfg, err := config.Load(dir)
-			if err != nil {
-				t.Fatalf("config.Load: %v", err)
-			}
-
-			_, err = talos.NewEngine(cfg)
-			if err == nil {
-				t.Fatal("NewEngine: expected an error for an unparseable Talos version, got nil")
-			}
-
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("NewEngine error = %q, want it to name %q", err, tc.want)
 			}
 		})
 	}

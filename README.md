@@ -158,10 +158,9 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `controlPlaneEndpoint`         | The cluster's control plane endpoint (e.g. a VIP or load balancer URL).                         |
 | `kubernetesVersion`            | Optional; defaults to the version bundled with talstomize's Talos machinery dependency. A leading `v` (e.g. `v1.31.1`) is accepted and stripped. |
 | `secrets`                      | Path to a secrets bundle produced by `talosctl gen secrets`. May be sops-encrypted.              |
-| `talosVersion`                 | Optional; the Talos version every node runs (e.g. `v1.14.2`, leading `v` optional). Selects the machine config style the base config is generated in (`talosctl gen config`'s `--talos-version`) unless `contractVersion` overrides it, and tags every node's installer image. Defaults to the Talos version bundled with talstomize's machinery dependency; a newer one is rejected. Your patches are passed through as-is - they're never converted to match. |
+| `talosVersion`                 | Optional; the Talos version every node runs (e.g. `v1.14.2`, leading `v` optional). Selects the machine config style the base config is generated in (`talosctl gen config`'s `--talos-version`), and tags every node's installer image. Defaults to the Talos version bundled with talstomize's machinery dependency; a newer one is rejected. Your patches are passed through as-is - they're never converted to match. See [Config style](#config-style). |
 | `additionalSubjectAltNames`    | Optional; extra SANs added to both the machine and kube-apiserver certificates on every node (`talosctl gen config`'s `--additional-sans`). |
 | `dnsDomain`                    | Optional; the cluster's DNS domain (`talosctl gen config`'s `--dns-domain`). Defaults to `cluster.local`. |
-| `contractVersion`              | Optional; pins the Talos version whose config *schema* ("version contract") the rendered configs follow, independently of `talosVersion`: the classic single-document shape up to `1.13`, the multi-document shape from `1.14` on. Defaults to `talosVersion`; the literal `current` selects the version bundled with talstomize's machinery dependency. See [Version contract](#version-contract). |
 | `installer.schematic`          | Optional; an [Image Factory](https://factory.talos.dev) schematic customization document (`extraKernelArgs`, `systemExtensions`, ...), resolved to a schematic ID and tagged with `talosVersion` into the cluster-wide installer image. Leave it unset for the vanilla (no customization) installer. Only the `metal` platform is supported for now. See [Image Factory schematics](#image-factory-schematics). |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
@@ -181,13 +180,13 @@ Talos 1.14 moved install settings from the legacy v1alpha1 `machine.install` blo
 
 - if a patch defines an `UnattendedInstallConfig` (e.g. with a `provisioning.diskSelector`), the image is set as its `installer.image`;
 - otherwise, if a patch sets the legacy `machine.install` block (e.g. `machine.install.disk`), the image is set as `machine.install.image`;
-- with neither, it follows the version contract (`talosVersion`, unless `contractVersion` is set): an `UnattendedInstallConfig` from Talos 1.14, `machine.install` before that.
+- with neither, it follows `talosVersion`: an `UnattendedInstallConfig` from Talos 1.14, `machine.install` before that.
 
 An image a patch sets explicitly in either place always wins - that's how to use an installer image that doesn't come from the Image Factory.
 
-### Version contract
+### Config style
 
-`contractVersion` only picks the *schema* of the rendered config - it never installs or upgrades anything (that's `talosVersion`, and `apply`/`diff` never run `talosctl upgrade`). Talos 1.14 moved what used to be nested fields (`machine.kubelet`, `machine.features.kubePrism`, `cluster.apiServer`, ...) into standalone documents (`KubeletConfig`, `KubePrismConfig`, `KubeAPIServerConfig`, ...), and the machinery emits one shape or the other according to the version contract. Pin it to a pre-1.14 version when your patches are written against the classic fields: a classic config is *still accepted by a 1.14 or newer node*, so an up-to-date node in a repo full of classic-field patches doesn't need those patches restated in document form.
+`talosVersion` also picks the *schema* of the rendered config (the "version contract"). Talos 1.14 moved what used to be nested fields (`machine.kubelet`, `machine.features.kubePrism`, `cluster.apiServer`, ...) into standalone documents (`KubeletConfig`, `KubePrismConfig`, `KubeAPIServerConfig`, ...), and the base config is generated in whichever shape matches `talosVersion`. Write your patches in that same shape: Talos 1.14+ rejects a config that sets the same thing both ways, and Talos 1.13 and older can't decode the new documents at all.
 
 Each patch entry is either:
 

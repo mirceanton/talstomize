@@ -298,6 +298,7 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 		"top-level typo":                 "kubernetesVerison: v1.37.1\n",
 		"removed installer.image":        "installer:\n  image: ghcr.io/siderolabs/installer:v1.14.2\n",
 		"removed installer.talosVersion": "installer:\n  talosVersion: v1.14.2\n",
+		"removed contractVersion":        "contractVersion: v1.13.10\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
