@@ -94,7 +94,7 @@ go install github.com/mirceanton/talstomize/cmd/talstomize@latest
    talstomize build . --validate=false # skip validating the rendered configs
    ```
 
-   Every rendered config is first validated with the same static checks as `talosctl validate --mode metal` - schema errors, a missing install disk, or a setting declared in both the classic v1alpha1 fields and their Talos 1.14 document form. If any node fails, nothing is written. These checks can't see the node itself (e.g. whether the install disk actually exists), so `apply` can still be rejected by the node.
+   Every rendered config is first validated with the same static checks as `talosctl validate` (`--mode metal`, or `--mode cloud` for nodes on a cloud [`platform`](#platforms)) - schema errors, a missing install disk on metal, or a setting declared in both the classic v1alpha1 fields and their Talos 1.14 document form. If any node fails, nothing is written. These checks can't see the node itself (e.g. whether the install disk actually exists), so `apply` can still be rejected by the node.
 
 4. Or apply them straight to the nodes:
 
@@ -164,9 +164,11 @@ See [`examples/simple`](./examples/simple) for a complete working example.
 | `talosVersion`                 | Optional; the Talos version every node runs (e.g. `v1.14.2`, leading `v` optional). Selects the machine config style the base config is generated in (`talosctl gen config`'s `--talos-version`), and tags every node's installer image. Defaults to the Talos version bundled with talstomize's machinery dependency; a newer one is rejected. Your patches are passed through as-is - they're never converted to match. See [Config style](#config-style). |
 | `additionalSubjectAltNames`    | Optional; extra SANs added to both the machine and kube-apiserver certificates on every node (`talosctl gen config`'s `--additional-sans`). |
 | `dnsDomain`                    | Optional; the cluster's DNS domain (`talosctl gen config`'s `--dns-domain`). Defaults to `cluster.local`. |
-| `installer.schematic`          | Optional; an [Image Factory](https://factory.talos.dev) schematic customization document (`extraKernelArgs`, `systemExtensions`, ...), resolved to a schematic ID and tagged with `talosVersion` into the cluster-wide installer image. Leave it unset for the vanilla (no customization) installer. Only the `metal` platform is supported for now. See [Image Factory schematics](#image-factory-schematics). |
+| `installer.schematic`          | Optional; an [Image Factory](https://factory.talos.dev) schematic customization document (`extraKernelArgs`, `systemExtensions`, ...), resolved to a schematic ID and tagged with `talosVersion` into the cluster-wide installer image. Leave it unset for the vanilla (no customization) installer. See [Image Factory schematics](#image-factory-schematics). |
+| `platform`                     | Optional; the Talos platform the nodes run on: `metal` (the default) or one of Talos's cloud platforms (`aws`, `gcp`, `azure`, `hcloud`, `nocloud`, ...). See [Platforms](#platforms). |
 | `nodes.<name>.ip`              | The node's address, used both as an API server SAN input and as the `talosctl` target.          |
 | `nodes.<name>.kind`            | `controlplane` or `worker`.                                                                     |
+| `nodes.<name>.platform`        | Optional; overrides `platform` for this node only. |
 | `nodes.<name>.installer`       | Optional; overrides `installer` for this node only (a full replacement, not merged). Still tagged with the cluster-wide `talosVersion`. |
 | `nodes.<name>.patches`         | Patches applied to this node only, after the cluster-wide and role-wide patches.                |
 | `patches`                      | Patches applied to every node, regardless of role - the equivalent of `talosctl gen config`'s unprefixed `--config-patch`. |
@@ -183,9 +185,19 @@ Talos 1.14 moved install settings from the legacy v1alpha1 `machine.install` blo
 
 - if a patch defines an `UnattendedInstallConfig` (e.g. with a `provisioning.diskSelector`), the image is set as its `installer.image`;
 - otherwise, if a patch sets the legacy `machine.install` block (e.g. `machine.install.disk`), the image is set as `machine.install.image`;
-- with neither, it follows `talosVersion`: an `UnattendedInstallConfig` from Talos 1.14, `machine.install` before that.
+- with neither, it follows `talosVersion`: an `UnattendedInstallConfig` from Talos 1.14, `machine.install` before that. On a cloud [platform](#platforms) no `UnattendedInstallConfig` is created, since those nodes aren't installed to disk and Talos rejects one without a disk selector.
 
 An image a patch sets explicitly in either place always wins - that's how to use an installer image that doesn't come from the Image Factory.
+
+### Platforms
+
+`platform` (cluster-wide, or `nodes.<name>.platform` per node) names the Talos platform a node runs on. It accepts `metal` (the default) and the cloud platforms the bundled Talos machinery knows about, such as `aws`, `gcp`, `azure`, `digital-ocean`, `hcloud`, `nocloud`, `openstack`, `vmware`, `oracle` and `vultr`. An unknown name is rejected, and so is a platform that needs a newer Talos version than `talosVersion`. The platform decides:
+
+- the installer image: `factory.talos.dev/<platform>-installer/...` (e.g. `hcloud-installer`);
+- how the install image is placed: a cloud node boots from its provider's disk image instead of being installed, so it only gets an image where a patch already declares an install config (see [Install image placement](#install-image-placement));
+- the `build` validation mode: `metal`, which requires an install disk, or `cloud` for every other platform.
+
+Booting the node in the first place (uploading the platform's disk image to your provider) is still up to you; grab the image from the [Image Factory](https://factory.talos.dev) for the same schematic.
 
 ### Config style
 
@@ -270,7 +282,7 @@ installer:
           - siderolabs/iscsi-tools
 ```
 
-This resolves (once per unique customization, memoized - a schematic shared by several nodes only hits the Factory once) to the installer image `factory.talos.dev/metal-installer/<schematic id>:v1.13.8`. `nodes.<name>.installer` overrides it per node, for hardware that needs its own extensions (e.g. one node with a GPU). With no schematic set, nodes get the vanilla installer (`factory.talos.dev/metal-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:<talosVersion>`, the same default `talosctl gen config` uses).
+This resolves (once per unique customization, memoized - a schematic shared by several nodes only hits the Factory once) to the installer image `factory.talos.dev/<platform>-installer/<schematic id>:v1.13.8` (`metal-installer` by default, see [Platforms](#platforms)). `nodes.<name>.installer` overrides it per node, for hardware that needs its own extensions (e.g. one node with a GPU). With no schematic set, nodes get the vanilla installer (`factory.talos.dev/<platform>-installer/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba:<talosVersion>`, the same default `talosctl gen config` uses).
 
 >[!NOTE]
 > Unlike everything else talstomize does, resolving a schematic needs network access to `factory.talos.dev` - `build`/`apply` will fail if it's unreachable. The vanilla installer's schematic ID is fixed, so leaving `installer` unset entirely avoids this.

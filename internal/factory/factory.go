@@ -1,11 +1,9 @@
 // Package factory resolves Talos Image Factory (https://factory.talos.dev)
 // schematics into installer image references.
 //
-// Only the "metal" platform is supported for now - it's what a bare-metal
-// homelab node needs (matching factory.talos.dev's "current" URL format,
-// "<platform>-installer/<version>" served for a given schematic), and is
-// the common case for talstomize's intended usage. Cloud-platform images
-// (aws-installer, gcp-installer, ...) aren't handled.
+// Installer images follow factory.talos.dev's "<platform>-installer"
+// format (metal-installer, aws-installer, hcloud-installer, ...), served for
+// any schematic.
 package factory
 
 import (
@@ -77,9 +75,9 @@ func Schematic(customization []byte) (string, error) {
 	return parsed.ID, nil
 }
 
-// InstallerImage builds the metal-platform installer image reference for a
+// InstallerImage builds the installer image reference for a platform,
 // resolved schematic ID and Talos version, e.g.
 // "factory.talos.dev/metal-installer/<id>:v1.13.8".
-func InstallerImage(schematicID, talosVersion string) string {
-	return fmt.Sprintf("factory.talos.dev/metal-installer/%s:%s", schematicID, talosVersion)
+func InstallerImage(platform, schematicID, talosVersion string) string {
+	return fmt.Sprintf("factory.talos.dev/%s-installer/%s:%s", platform, schematicID, talosVersion)
 }

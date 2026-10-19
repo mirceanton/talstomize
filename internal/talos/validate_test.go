@@ -82,7 +82,7 @@ workerPatches: []
 				t.Fatalf("NewEngine: %v", err)
 			}
 
-			_, err = talos.Validate(mustRenderNode(t, engine, "nodea"))
+			_, err = talos.Validate(mustRenderNode(t, engine, "nodea"), engine.Platform(cfg.Nodes["nodea"]))
 
 			switch {
 			case tc.want == "" && err != nil:

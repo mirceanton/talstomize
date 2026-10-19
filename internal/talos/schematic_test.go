@@ -207,7 +207,7 @@ func TestEffectiveCustomizationNoneSet(t *testing.T) {
 	}
 }
 
-func TestResolveSchematicImageMemoizes(t *testing.T) {
+func TestResolveSchematicIDMemoizes(t *testing.T) {
 	calls := 0
 
 	e := &Engine{
@@ -222,8 +222,8 @@ func TestResolveSchematicImageMemoizes(t *testing.T) {
 	schematic := yamlNode(t, "customization:\n  extraKernelArgs: [foo]\n")
 
 	for range 3 {
-		if _, err := e.resolveSchematicImage(schematic); err != nil {
-			t.Fatalf("resolveSchematicImage: %v", err)
+		if _, err := e.resolveSchematicID(schematic); err != nil {
+			t.Fatalf("resolveSchematicID: %v", err)
 		}
 	}
 

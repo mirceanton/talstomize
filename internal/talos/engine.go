@@ -4,11 +4,14 @@ package talos
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blang/semver/v4"
 	clientconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
@@ -85,6 +88,10 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		return nil, fmt.Errorf("talosVersion %s is newer than the Talos machinery talstomize was built with (%s)", talosVersion, tversion.Tag)
 	}
 
+	if err := checkPlatforms(cfg, talosVersion); err != nil {
+		return nil, err
+	}
+
 	var controlPlaneIPs []string
 
 	for _, node := range cfg.Nodes {
@@ -122,6 +129,25 @@ func NewEngine(cfg *tstomcfg.Config) (*Engine, error) {
 		controlPlaneIPs:   controlPlaneIPs,
 		resolveSchematic:  factory.Schematic,
 	}, nil
+}
+
+// checkPlatforms rejects a node whose platform only exists from a newer
+// Talos version than talosVersion.
+func checkPlatforms(cfg *tstomcfg.Config, talosVersion string) error {
+	version, err := semver.ParseTolerant(talosVersion)
+	if err != nil {
+		return fmt.Errorf("talosVersion: parsing %q: %w", talosVersion, err)
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(cfg.Nodes)) {
+		platform, ok := tstomcfg.LookupPlatform(cfg.NodePlatform(cfg.Nodes[name]))
+		if ok && version.LT(platform.MinVersion) {
+			return fmt.Errorf("node %q: platform %q requires Talos %s or newer, but talosVersion is %s",
+				name, platform.Name, platform.MinVersion, talosVersion)
+		}
+	}
+
+	return nil
 }
 
 // KubernetesVersion returns the Kubernetes version every node's config is
@@ -179,15 +205,26 @@ func (e *Engine) effectiveInstaller(node tstomcfg.Node) tstomcfg.Installer {
 }
 
 // InstallImage resolves the installer image talstomize computes for node:
-// its effective schematic (or the vanilla one, if none is set) tagged with
-// the cluster's talosVersion.
+// its platform's Image Factory installer for its effective schematic (or
+// the vanilla one, if none is set), tagged with the cluster's talosVersion.
 func (e *Engine) InstallImage(node tstomcfg.Node) (string, error) {
-	installer := e.effectiveInstaller(node)
-	if !installer.SchematicSet() {
-		return factory.InstallerImage(factory.VanillaSchematicID, e.talosVersion), nil
+	id := factory.VanillaSchematicID
+
+	if installer := e.effectiveInstaller(node); installer.SchematicSet() {
+		var err error
+
+		id, err = e.resolveSchematicID(installer.Schematic)
+		if err != nil {
+			return "", err
+		}
 	}
 
-	return e.resolveSchematicImage(installer.Schematic)
+	return factory.InstallerImage(e.cfg.NodePlatform(node), id, e.talosVersion), nil
+}
+
+// Platform returns the Talos platform node runs on.
+func (e *Engine) Platform(node tstomcfg.Node) string {
+	return e.cfg.NodePlatform(node)
 }
 
 // EffectiveCustomization returns the parsed schematic customization (extra
@@ -208,10 +245,9 @@ func (e *Engine) EffectiveCustomization(node tstomcfg.Node) (factory.Customizati
 	return customization, nil
 }
 
-// resolveSchematicImage posts schematic to the Image Factory (memoized, so
-// the same customization is only ever resolved once) and returns the
-// resulting metal-platform installer image reference.
-func (e *Engine) resolveSchematicImage(schematic yaml.Node) (string, error) {
+// resolveSchematicID posts schematic to the Image Factory (memoized, so the
+// same customization is only ever resolved once) and returns its ID.
+func (e *Engine) resolveSchematicID(schematic yaml.Node) (string, error) {
 	raw, err := yaml.Marshal(&schematic)
 	if err != nil {
 		return "", fmt.Errorf("marshaling schematic: %w", err)
@@ -231,7 +267,7 @@ func (e *Engine) resolveSchematicImage(schematic yaml.Node) (string, error) {
 		e.schematics[string(raw)] = id
 	}
 
-	return factory.InstallerImage(id, e.talosVersion), nil
+	return id, nil
 }
 
 // RenderNode builds the final, patched machine config for a single node, in
@@ -287,7 +323,7 @@ func (e *Engine) RenderNode(name string) (tconfig.Provider, error) {
 	// patch placed *before* the user's patches rather than merged on afterwards:
 	// merging any UnattendedInstallConfig patch without a diskSelector onto one that
 	// has it wipes it (cel.Expression.Merge copies the right side unconditionally).
-	imagePatchFormat, ok := installImagePatch(rendered, e.contract)
+	imagePatchFormat, ok := installImagePatch(rendered, e.contract, e.Platform(node) == tstomcfg.PlatformMetal)
 	if !ok {
 		return rendered, nil
 	}
@@ -348,9 +384,13 @@ func applyPatches(base tconfig.Provider, patches []configpatcher.Patch) (tconfig
 // of its install config - an UnattendedInstallConfig document, or the legacy
 // v1alpha1 machine.install block - since Talos rejects a config that uses
 // both. With neither present, it follows contract: an UnattendedInstallConfig
-// document from Talos 1.14, machine.install before that. ok is false when a
-// patch already set an install image explicitly, which always wins.
-func installImagePatch(rendered tconfig.Provider, contract *tconfig.VersionContract) (format string, ok bool) {
+// document from Talos 1.14, machine.install before that - except that a
+// node which isn't installed to disk (any non-metal platform, booted from
+// the provider's disk image) gets no UnattendedInstallConfig of its own,
+// since Talos rejects one without a disk selector. ok is false when no
+// image patch is needed, including when a patch already set an install
+// image explicitly, which always wins.
+func installImagePatch(rendered tconfig.Provider, contract *tconfig.VersionContract, installed bool) (format string, ok bool) {
 	const (
 		unattended = "apiVersion: v1alpha1\nkind: UnattendedInstallConfig\ninstaller:\n  image: %s\n"
 		legacy     = "machine:\n  install:\n    image: %s\n"
@@ -365,6 +405,8 @@ func installImagePatch(rendered tconfig.Provider, contract *tconfig.VersionContr
 		return unattended, true
 	case legacyInstall(rendered) != nil, !contract.UnattendedInstallConfig():
 		return legacy, true
+	case !installed:
+		return "", false
 	default:
 		return unattended, true
 	}
