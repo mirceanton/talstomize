@@ -352,3 +352,60 @@ nodes:
 		})
 	}
 }
+
+func TestLoadPlatform(t *testing.T) {
+	for name, tc := range map[string]struct {
+		// cluster and node are the cluster-wide and node platform fields, "" for unset.
+		cluster, node string
+		// want is the node's effective platform, "" if Load must fail.
+		want string
+	}{
+		"unset defaults to metal": {want: "metal"},
+		"cluster-wide":            {cluster: "hcloud", want: "hcloud"},
+		"node override":           {cluster: "hcloud", node: "aws", want: "aws"},
+		"unknown cluster-wide":    {cluster: "hetzner"},
+		"unknown node":            {node: "hetzner"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+
+			var cluster, node string
+			if tc.cluster != "" {
+				cluster = "platform: " + tc.cluster + "\n"
+			}
+
+			if tc.node != "" {
+				node = "    platform: " + tc.node + "\n"
+			}
+
+			writeFile(t, dir, "talstomize.yaml", `
+apiVersion: config.talstomize.dev/v1alpha1
+kind: Talstomize
+clusterName: test-cluster
+controlPlaneEndpoint: https://10.5.0.2:6443
+secrets: ./talos-secrets.yaml
+`+cluster+`nodes:
+  nodea:
+    ip: 10.5.0.11
+    kind: controlplane
+`+node)
+
+			cfg, err := Load(dir)
+			if tc.want == "" {
+				if err == nil {
+					t.Fatal("Load: expected an error for an unknown platform, got nil")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+
+			if got := cfg.NodePlatform(cfg.Nodes["nodea"]); got != tc.want {
+				t.Errorf("NodePlatform() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

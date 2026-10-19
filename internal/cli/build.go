@@ -23,7 +23,8 @@ func newBuildCommand() *cobra.Command {
 		Long: "Render per-node Talos machine configs from a talstomize.yaml, applying role and " +
 			"per-node patches, and write one file per node (named <node>.yaml) to the output " +
 			"directory, plus a talosctl client config (named \"talosconfig\"). Every rendered config " +
-			"is validated the way `talosctl validate --mode metal` would before anything is written.",
+			"is validated the way `talosctl validate` would (in metal mode, or cloud mode for cloud " +
+			"platforms) before anything is written.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -64,7 +65,7 @@ func newBuildCommand() *cobra.Command {
 				}
 
 				if validate {
-					warnings, err := talos.Validate(rendered)
+					warnings, err := talos.Validate(rendered, engine.Platform(cfg.Nodes[name]))
 					if err != nil {
 						return fmt.Errorf("node %q: rendered config is invalid (skip this check with --validate=false): %w", name, err)
 					}
@@ -112,7 +113,7 @@ func newBuildCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "directory to write per-node configs to (defaults to \"_out\" next to the talstomize.yaml)")
 
-	cmd.Flags().BoolVar(&validate, "validate", true, "validate every rendered config like talosctl validate --mode metal, failing the build on errors")
+	cmd.Flags().BoolVar(&validate, "validate", true, "validate every rendered config like talosctl validate, failing the build on errors")
 
 	return cmd
 }

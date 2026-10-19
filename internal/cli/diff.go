@@ -182,25 +182,30 @@ func getRunningConfig(ip string, passthrough []string, stderr io.Writer) (tconfi
 func diffLiveState(engine *talos.Engine, node config.Node, rendered tconfig.Provider, errOut io.Writer, name string, passthrough []string) ([]string, error) {
 	var lines []string
 
-	if target := talos.InstallImage(rendered); target != "" {
-		running, err := getRunningTalosVersion(errOut, node.IP, passthrough)
-		if err != nil {
-			return nil, fmt.Errorf("node %q: fetching running Talos version: %w", name, err)
-		}
-
-		if drifted, ok := talos.TalosVersionDrift(running, target); ok && drifted {
-			lines = append(lines, fmt.Sprintf("    talos: running %s, want %s (%s)", running, talos.ImageTag(target), target))
-		}
-	}
-
-	// A patch that sets its own install image overrides the schematic, so
-	// there's nothing to compare extensions/kernel args against.
 	computed, err := engine.InstallImage(node)
 	if err != nil {
 		return nil, fmt.Errorf("node %q: resolving install image: %w", name, err)
 	}
 
-	if talos.InstallImage(rendered) != computed {
+	// A node with no install config of its own (a cloud node, booted from its
+	// platform's disk image) is still expected to run the computed image.
+	target := talos.InstallImage(rendered)
+	if target == "" {
+		target = computed
+	}
+
+	running, err := getRunningTalosVersion(errOut, node.IP, passthrough)
+	if err != nil {
+		return nil, fmt.Errorf("node %q: fetching running Talos version: %w", name, err)
+	}
+
+	if drifted, ok := talos.TalosVersionDrift(running, target); ok && drifted {
+		lines = append(lines, fmt.Sprintf("    talos: running %s, want %s (%s)", running, talos.ImageTag(target), target))
+	}
+
+	// A patch that sets its own install image overrides the schematic, so
+	// there's nothing to compare extensions/kernel args against.
+	if target != computed {
 		return lines, nil
 	}
 

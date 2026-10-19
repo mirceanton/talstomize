@@ -3,6 +3,7 @@ module github.com/mirceanton/talstomize
 go 1.26.6
 
 require (
+	github.com/blang/semver/v4 v4.0.0
 	github.com/joho/godotenv v1.5.1
 	github.com/siderolabs/talos/pkg/machinery v1.14.4
 	github.com/spf13/cobra v1.10.2
@@ -12,7 +13,6 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/containerd/go-cni v1.1.13 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/cosi-project/runtime v1.16.3 // indirect

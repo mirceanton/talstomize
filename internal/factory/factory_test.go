@@ -87,7 +87,7 @@ func TestSchematicUnreachable(t *testing.T) {
 }
 
 func TestInstallerImage(t *testing.T) {
-	got := InstallerImage("abc123", "v1.13.8")
+	got := InstallerImage("metal", "abc123", "v1.13.8")
 	want := "factory.talos.dev/metal-installer/abc123:v1.13.8"
 
 	if got != want {

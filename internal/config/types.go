@@ -10,6 +10,7 @@ import (
 
 	"github.com/joho/godotenv"
 	tconfig "github.com/siderolabs/talos/pkg/machinery/config"
+	"github.com/siderolabs/talos/pkg/machinery/platforms"
 	"gopkg.in/yaml.v3"
 
 	"github.com/mirceanton/talstomize/internal/envsubst"
@@ -37,6 +38,9 @@ type Node struct {
 	// Installer overrides Config.Installer for this node only - a full
 	// replacement, not merged.
 	Installer Installer `yaml:"installer,omitempty"`
+
+	// Platform overrides Config.Platform for this node only.
+	Platform string `yaml:"platform,omitempty"`
 }
 
 // Config is the parsed content of a talstomize.yaml file.
@@ -69,6 +73,12 @@ type Config struct {
 	// overridable per node via Node.Installer.
 	Installer Installer `yaml:"installer,omitempty"`
 
+	// Platform is the Talos platform the nodes run on ("metal", "aws",
+	// "hcloud", ...), overridable per node via Node.Platform. It picks the
+	// Image Factory installer image and the mode configs are validated in.
+	// Optional; defaults to "metal".
+	Platform string `yaml:"platform,omitempty"`
+
 	Nodes map[string]Node `yaml:"nodes"`
 
 	// Patches apply to every node regardless of role, before
@@ -87,13 +97,30 @@ type Config struct {
 // (factory.talos.dev) Schematic customization document (extraKernelArgs,
 // systemExtensions, ...), resolved to a schematic ID and tagged with
 // Config.TalosVersion. Leaving Schematic unset uses the vanilla (no
-// customization) schematic. Only the "metal" platform is supported for now.
+// customization) schematic.
 type Installer struct {
 	// Schematic is the customization document. A zero Kind (SchematicSet
 	// returns false) means unset - decoding into *yaml.Node instead of
 	// yaml.Node silently loses the node's content, so this must stay a
 	// value, not a pointer.
 	Schematic yaml.Node `yaml:"schematic,omitempty"`
+}
+
+// PlatformMetal is the default platform: bare metal, installed to disk by
+// the Talos installer.
+const PlatformMetal = "metal"
+
+// NodePlatform returns the platform effective for node: its own if set,
+// else the cluster-wide one, else PlatformMetal.
+func (c *Config) NodePlatform(node Node) string {
+	switch {
+	case node.Platform != "":
+		return node.Platform
+	case c.Platform != "":
+		return c.Platform
+	default:
+		return PlatformMetal
+	}
 }
 
 // SchematicSet reports whether i has a schematic set.
@@ -228,7 +255,15 @@ func (c *Config) validate() error {
 		}
 	}
 
+	if c.Platform != "" && !knownPlatform(c.Platform) {
+		errs = append(errs, fmt.Sprintf("platform: unknown Talos platform %q (want one of: %s)", c.Platform, strings.Join(platformNames(), ", ")))
+	}
+
 	for name, node := range c.Nodes {
+		if node.Platform != "" && !knownPlatform(node.Platform) {
+			errs = append(errs, fmt.Sprintf("node %q: platform: unknown Talos platform %q (want one of: %s)", name, node.Platform, strings.Join(platformNames(), ", ")))
+		}
+
 		if node.IP == "" {
 			errs = append(errs, fmt.Sprintf("node %q: ip is required", name))
 		}
@@ -245,4 +280,41 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// knownPlatforms returns every platform the Talos machinery knows: metal,
+// then its cloud platforms.
+func knownPlatforms() []platforms.Platform {
+	return append([]platforms.Platform{platforms.MetalPlatform()}, platforms.CloudPlatforms()...)
+}
+
+// platformNames returns the names of knownPlatforms.
+func platformNames() []string {
+	var names []string
+
+	for _, platform := range knownPlatforms() {
+		names = append(names, platform.Name)
+	}
+
+	return names
+}
+
+// knownPlatform reports whether name is a platform the Talos machinery
+// knows: metal, or one of its cloud platforms.
+func knownPlatform(name string) bool {
+	_, ok := LookupPlatform(name)
+
+	return ok
+}
+
+// LookupPlatform returns the Talos machinery's description of the platform
+// called name.
+func LookupPlatform(name string) (platforms.Platform, bool) {
+	for _, platform := range knownPlatforms() {
+		if platform.Name == name {
+			return platform, true
+		}
+	}
+
+	return platforms.Platform{}, false
 }
