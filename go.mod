@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/joho/godotenv v1.5.1
-	github.com/siderolabs/talos/pkg/machinery v1.14.4
+	github.com/siderolabs/talos/pkg/machinery v1.14.5
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
